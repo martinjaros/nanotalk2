@@ -258,11 +258,6 @@ G_DEFINE_AUTOPTR_CLEANUP_FUNC(GZlibCompressor, g_object_unref)
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GZlibDecompressor, g_object_unref)
 #endif /* __G_IO_H__ */
 
-#ifdef __GST_H__
-G_DEFINE_AUTOPTR_CLEANUP_FUNC(GstCaps, gst_caps_unref)
-G_DEFINE_AUTOPTR_CLEANUP_FUNC(GstBus, gst_object_unref)
-#endif /* __GST_H__ */
-
 #endif /* GLIB_VERSION_2_44 */
 
 #endif /* __GLIB_COMPAT_H__ */

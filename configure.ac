@@ -1,8 +1,9 @@
-AC_INIT([Nanotalk distributed multimedia service], [2.0], [xjaros32@stud.feec.vutbr.cz], [nanotalk])
-AM_INIT_AUTOMAKE([foreign])
+AC_INIT([Nanotalk distributed multimedia service], [2.0], [xjaros32@stud.feec.vutbr.cz], [nanotalk], [https://github.com/martinjaros/nanotalk2])
+AM_INIT_AUTOMAKE([foreign no-define])
 AM_SILENT_RULES([yes])
+
 AC_PROG_CC([gcc])
-LT_INIT
+AC_CONFIG_HEADERS([config.h])
 
 SODIUM_REQUIRED=1.0.3
 PKG_CHECK_MODULES(SODIUM, [libsodium >= $SODIUM_REQUIRED],
@@ -29,15 +30,5 @@ PKG_CHECK_MODULES(GST, [gstreamer-1.0 >= $GST_REQUIRED gstreamer-rtp-1.0 >= $GST
         libgstreamer-plugins-base1.0-dev >= $GST_REQUIRED
 ])])
 
-if test "x${prefix}" = "x$HOME"; then
-    plugindir="$HOME/.gstreamer-1.0/plugins"
-else
-    plugindir="\$(libdir)/gstreamer-1.0"
-fi
-AC_SUBST(plugindir)
-
-GST_PLUGIN_LDFLAGS='-module -avoid-version -export-symbols-regex [_]*\(gst_\|Gst\|GST_\).*'
-AC_SUBST(GST_PLUGIN_LDFLAGS)
-
-AC_CONFIG_FILES([Makefile src/Makefile plugins/Makefile])
+AC_CONFIG_FILES([Makefile src/Makefile])
 AC_OUTPUT
