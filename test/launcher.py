@@ -17,8 +17,8 @@ if GRAPHS:
     subprocess.call('rm -f *-pipeline.dot.svg', shell=True)
 
 execpath = '../src/nanotalk'
-args1 = 'nanotalk -k test1.key -a aliases.txt'
-args2 = 'nanotalk -k test2.key -a aliases.txt -l 5005 -h localhost'
+args1 = 'nanotalk -s incoming-call.ogg -k test1.key -a aliases.txt'
+args2 = 'nanotalk -s incoming-call.ogg -k test2.key -a aliases.txt -l 5005 -h localhost'
 
 proc1 = subprocess.Popen(args1.split(), executable=execpath, env=os.environ)
 time.sleep(.1)

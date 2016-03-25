@@ -41,6 +41,8 @@ struct _application
 
     GstElement *rx_pipeline, *tx_pipeline;
     guint rx_watch, tx_watch;
+
+    gchar *sound_file;
 };
 
 static void lookup_start(Application *app, const gchar *id)
@@ -84,15 +86,23 @@ static void call_stop(GtkWidget *widget, gpointer arg)
     gtk_widget_set_sensitive(app->button_start, TRUE);
     gtk_widget_set_sensitive(app->button_stop, FALSE);
 
-    // Cleanup pipelines
-    gst_debug_bin_to_dot_file_with_ts(GST_BIN(app->tx_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "stop-tx-pipeline");
-    gst_debug_bin_to_dot_file_with_ts(GST_BIN(app->rx_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "stop-rx-pipeline");
-    gst_element_set_state(app->tx_pipeline, GST_STATE_NULL);
-    gst_element_set_state(app->rx_pipeline, GST_STATE_NULL);
-    gst_object_unref(app->tx_pipeline);
-    gst_object_unref(app->rx_pipeline);
-    g_source_remove(app->tx_watch);
-    g_source_remove(app->rx_watch);
+    if(app->tx_pipeline)
+    {
+        gst_debug_bin_to_dot_file_with_ts(GST_BIN(app->tx_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "stop-tx-pipeline");
+        gst_element_set_state(app->tx_pipeline, GST_STATE_NULL);
+        g_source_remove(app->tx_watch);
+        gst_object_unref(app->tx_pipeline);
+        app->tx_pipeline = NULL;
+    }
+
+    if(app->rx_pipeline)
+    {
+        gst_debug_bin_to_dot_file_with_ts(GST_BIN(app->rx_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "stop-rx-pipeline");
+        gst_element_set_state(app->rx_pipeline, GST_STATE_NULL);
+        g_source_remove(app->rx_watch);
+        gst_object_unref(app->rx_pipeline);
+        app->rx_pipeline = NULL;
+    }
 }
 
 static gboolean bus_watch(GstBus *bus, GstMessage *message, gpointer arg)
@@ -123,6 +133,14 @@ static gboolean bus_watch(GstBus *bus, GstMessage *message, gpointer arg)
             // Stop pipeline on socket timeout
             if(strcmp(gst_structure_get_name(gst_message_get_structure(message)), "GstUDPSrcTimeout") == 0)
                 call_stop(app->button_stop, app);
+
+            break;
+        }
+
+        case GST_MESSAGE_EOS:
+        {
+            if(strcmp(GST_OBJECT_NAME(message->src), "playbin_loop") == 0)
+                gst_element_seek_simple(GST_ELEMENT(message->src), GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH, 0);
 
             break;
         }
@@ -201,8 +219,11 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     GstElement *audio_dec = gst_element_factory_make("opusdec", "audio_dec"); g_assert(audio_dec);
     GstElement *audio_sink = gst_element_factory_make("autoaudiosink", "audio_sink"); g_assert(audio_sink);
 
-    gst_bin_add_many(GST_BIN(app->rx_pipeline), rtp_src, rtp_dec, rtp_buf, audio_depay, audio_dec, audio_sink, NULL);
-    gst_element_link_many(rtp_src, rtp_dec, rtp_buf, audio_depay, audio_dec, audio_sink, NULL);
+    GstElement *sink_volume = gst_element_factory_make("volume", "sink_volume"); g_assert(sink_volume);
+    g_object_set(sink_volume, "mute", remote, NULL);
+
+    gst_bin_add_many(GST_BIN(app->rx_pipeline), rtp_src, rtp_dec, rtp_buf, audio_depay, audio_dec, sink_volume, audio_sink, NULL);
+    gst_element_link_many(rtp_src, rtp_dec, rtp_buf, audio_depay, audio_dec, sink_volume, audio_sink, NULL);
     gst_debug_bin_to_dot_file_with_ts(GST_BIN(app->rx_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "start-rx-pipeline");
     gst_element_set_state(app->rx_pipeline, GST_STATE_PLAYING);
 
@@ -212,9 +233,13 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     app->tx_watch = gst_bus_add_watch(bus, bus_watch, app);
     gst_object_unref(bus);
 
+    GstElement *src_volume = gst_element_factory_make("volume", "src_volume"); g_assert(src_volume);
+    g_object_set(src_volume, "mute", remote, NULL);
+
     GstElement *audio_src = gst_element_factory_make("autoaudiosrc", "audio_src"); g_assert(audio_src);
     GstElement *audio_enc = gst_element_factory_make("opusenc", "audio_enc"); g_assert(audio_enc);
     GstElement *audio_pay = gst_element_factory_make("rtpopuspay", "audio_pay"); g_assert(audio_pay);
+    g_object_set(audio_enc, "cbr", FALSE, "dtx", TRUE, NULL);
 
     GstElement *rtp_enc = gst_element_factory_make("rtpencrypt", "rtp_enc"); g_assert(rtp_enc);
     g_object_set(rtp_enc, "key", enc_key, NULL);
@@ -222,18 +247,59 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     GstElement *rtp_sink = gst_element_factory_make("udpsink", "rtp_sink"); g_assert(rtp_sink);
     g_object_set(rtp_sink, "socket", sink_socket, "host", host, "port", port, NULL);
 
-    gst_bin_add_many(GST_BIN(app->tx_pipeline), audio_src, audio_enc, audio_pay, rtp_enc, rtp_sink, NULL);
-    gst_element_link_many(audio_src, audio_enc, audio_pay, rtp_enc, rtp_sink, NULL);
+    gst_bin_add_many(GST_BIN(app->tx_pipeline), audio_src, src_volume, audio_enc, audio_pay, rtp_enc, rtp_sink, NULL);
+    gst_element_link_many(audio_src, src_volume, audio_enc, audio_pay, rtp_enc, rtp_sink, NULL);
     gst_debug_bin_to_dot_file_with_ts(GST_BIN(app->tx_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "start-tx-pipeline");
     gst_element_set_state(app->tx_pipeline, GST_STATE_PLAYING);
+
+    if(remote)
+    {
+        GstElement *playbin = NULL;
+        guint playbin_watch;
+        if(app->sound_file)
+        {
+            // Play sound file
+            playbin = gst_element_factory_make("playbin", "playbin_loop"); g_assert(playbin);
+            GstBus *bus = gst_pipeline_get_bus(GST_PIPELINE(playbin));
+            playbin_watch = gst_bus_add_watch(bus, bus_watch, app);
+            gst_object_unref(bus);
+
+            g_autofree gchar *uri = gst_filename_to_uri(app->sound_file, NULL);
+            g_object_set(playbin, "uri", uri, NULL);
+            gst_element_set_state(playbin, GST_STATE_PLAYING);
+        }
+
+        // Show dialog
+        GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(app->window),
+            GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT, GTK_MESSAGE_QUESTION, GTK_BUTTONS_YES_NO,
+            "Incoming call from %s\nAnswer?", gtk_entry_get_text(GTK_ENTRY(app->entry)));
+
+        gint response = gtk_dialog_run(GTK_DIALOG(dialog));
+        gtk_widget_destroy(dialog);
+        if(playbin)
+        {
+            g_source_remove(playbin_watch);
+            gst_element_set_state(playbin, GST_STATE_NULL);
+            gst_object_unref(playbin);
+        }
+
+        if(response == GTK_RESPONSE_YES)
+        {
+            g_object_set(src_volume, "mute", FALSE, NULL);
+            g_object_set(sink_volume, "mute", FALSE, NULL);
+        }
+        else
+        {
+            // Terminate
+            call_stop(app->button_stop, app);
+            return;
+        }
+    }
 
     // Show main window
     gtk_widget_set_sensitive(app->button_stop, TRUE);
     if(!gtk_widget_get_visible(app->window))
-    {
         gtk_widget_show(app->window);
-        gtk_window_set_urgency_hint(GTK_WINDOW(app->window), TRUE);
-    }
 }
 
 static void on_error(DhtClient *client, const gchar *id, GError *error, gpointer arg)
@@ -290,6 +356,7 @@ static gboolean application_init(Application *app, int *argc, char ***argv, GErr
         { "ipv6", '6', 0, G_OPTION_ARG_NONE, &ipv6, "Enable IPv6", NULL },
         { "bootstrap-host", 'h', 0, G_OPTION_ARG_STRING, &bootstrap_host, "Bootstrap address", "ADDR" },
         { "bootstrap-port", 'p', 0, G_OPTION_ARG_INT, &bootstrap_port, "Bootstrap port", "NUM" },
+        { "call-sound", 's', 0, G_OPTION_ARG_STRING, &app->sound_file, "Incoming call sound", "FILE" },
         { NULL }
     };
 
@@ -439,6 +506,7 @@ static void application_cleanup(Application *app)
     if(app->completions) g_object_unref(app->completions);
     if(app->client) g_object_unref(app->client);
 
+    g_free(app->sound_file);
     memset(app, 0, sizeof(Application));
 }
 
