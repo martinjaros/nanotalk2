@@ -43,6 +43,18 @@ struct _application
     guint rx_watch, tx_watch;
 };
 
+static void lookup_start(Application *app, const gchar *id)
+{
+    g_autoptr(GError) error = NULL;
+    if(!dht_client_lookup(app->client, id, &error))
+    {
+        g_info("%s %s", id, error->message);
+        return;
+    }
+
+    gtk_widget_set_sensitive(app->button_start, FALSE);
+}
+
 static void call_start(GtkWidget *widget, gpointer arg)
 {
     Application *app = (Application*)arg;
@@ -57,34 +69,13 @@ static void call_start(GtkWidget *widget, gpointer arg)
         g_autofree gchar *alias = NULL;
         gtk_tree_model_get(GTK_TREE_MODEL(app->completions), &iter, 0, &id, 1, &alias, -1);
         if(strcmp(text, alias) == 0)
-        {
-            // Initiate lookup by alias
-            g_autoptr(GError) error = NULL;
-            if(!dht_client_lookup(app->client, id, &error))
-            {
-                g_info("%s %s", id, error->message);
-                return;
-            }
-
-            gtk_widget_set_sensitive(app->button_start, FALSE);
-            return;
-        }
+            return lookup_start(app, id);
 
         valid = gtk_tree_model_iter_next(GTK_TREE_MODEL(app->completions), &iter);
     }
 
     if(strlen(text) == DHT_ID_LENGTH)
-    {
-        // Initiate lookup by direct ID
-        g_autoptr(GError) error = NULL;
-        if(!dht_client_lookup(app->client, text, &error))
-        {
-            g_info("%s %s", text, error->message);
-            return;
-        }
-
-        gtk_widget_set_sensitive(app->button_start, FALSE);
-    }
+        lookup_start(app, text);
 }
 
 static void call_stop(GtkWidget *widget, gpointer arg)
@@ -93,14 +84,13 @@ static void call_stop(GtkWidget *widget, gpointer arg)
     gtk_widget_set_sensitive(app->button_start, TRUE);
     gtk_widget_set_sensitive(app->button_stop, FALSE);
 
+    // Cleanup pipelines
     gst_debug_bin_to_dot_file_with_ts(GST_BIN(app->tx_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "stop-tx-pipeline");
     gst_debug_bin_to_dot_file_with_ts(GST_BIN(app->rx_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "stop-rx-pipeline");
-
-    // Cleanup pipelines
     gst_element_set_state(app->tx_pipeline, GST_STATE_NULL);
     gst_element_set_state(app->rx_pipeline, GST_STATE_NULL);
-    g_object_unref(app->tx_pipeline);
-    g_object_unref(app->rx_pipeline);
+    gst_object_unref(app->tx_pipeline);
+    gst_object_unref(app->rx_pipeline);
     g_source_remove(app->tx_watch);
     g_source_remove(app->rx_watch);
 }
@@ -121,7 +111,7 @@ static gboolean bus_watch(GstBus *bus, GstMessage *message, gpointer arg)
 
         case GST_MESSAGE_WARNING:
         {
-            // Handle socket errors
+            // Stop pipeline on socket error
             if(strcmp(GST_OBJECT_NAME(message->src), "rtp_sink") == 0)
                 call_stop(app->button_stop, app);
 
@@ -130,7 +120,7 @@ static gboolean bus_watch(GstBus *bus, GstMessage *message, gpointer arg)
 
         case GST_MESSAGE_ELEMENT:
         {
-            // Handle timeout
+            // Stop pipeline on socket timeout
             if(strcmp(gst_structure_get_name(gst_message_get_structure(message)), "GstUDPSrcTimeout") == 0)
                 call_stop(app->button_stop, app);
 
@@ -159,12 +149,6 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
         GSocket *socket, GSocketAddress *sockaddr, GBytes *enc_key, GBytes *dec_key, gboolean remote, gpointer arg)
 {
     Application *app = (Application*)arg;
-    gtk_widget_set_sensitive(app->button_stop, TRUE);
-    if(remote && !gtk_widget_get_visible(app->window))
-    {
-        gtk_window_set_urgency_hint(GTK_WINDOW(app->window), TRUE);
-        gtk_widget_show_all(app->window);
-    }
 
     // Translate ID to alias
     GtkTreeIter iter;
@@ -242,6 +226,14 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     gst_element_link_many(audio_src, audio_enc, audio_pay, rtp_enc, rtp_sink, NULL);
     gst_debug_bin_to_dot_file_with_ts(GST_BIN(app->tx_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "start-tx-pipeline");
     gst_element_set_state(app->tx_pipeline, GST_STATE_PLAYING);
+
+    // Show main window
+    gtk_widget_set_sensitive(app->button_stop, TRUE);
+    if(!gtk_widget_get_visible(app->window))
+    {
+        gtk_widget_show(app->window);
+        gtk_window_set_urgency_hint(GTK_WINDOW(app->window), TRUE);
+    }
 }
 
 static void on_error(DhtClient *client, const gchar *id, GError *error, gpointer arg)
@@ -255,16 +247,16 @@ static void activate_entry(GtkWidget *widget, gpointer arg)
 {
     Application *app = (Application*)arg;
     if(gtk_widget_is_sensitive(app->button_start))
-        call_start(widget, arg);
+        call_start(app->button_start, app);
     else if(gtk_widget_is_sensitive(app->button_stop))
-        call_stop(widget, arg);
+        call_stop(app->button_stop, app);
 }
 
 static void activate_icon(GtkWidget *widget, gpointer arg)
 {
     Application *app = (Application*)arg;
     if(!gtk_widget_get_visible(app->window))
-        gtk_widget_show_all(app->window);
+        gtk_widget_show(app->window);
     else
         gtk_widget_hide(app->window);
 }
@@ -401,32 +393,26 @@ static gboolean application_init(Application *app, int *argc, char ***argv, GErr
 
     // Completion
     GtkEntryCompletion *completion = gtk_entry_completion_new();
-    gtk_entry_completion_set_model(completion, GTK_TREE_MODEL(app->completions));
-    gtk_entry_completion_set_inline_completion(completion, TRUE);
-    gtk_entry_completion_set_inline_selection(completion, TRUE);
+    g_object_set(completion, "model", app->completions, "inline-completion", TRUE, "inline-selection", TRUE, NULL);
     gtk_entry_completion_set_text_column(completion, 1);
     gtk_entry_set_completion(GTK_ENTRY(app->entry), completion);
     g_object_unref(completion);
 
     // Geometry
     GtkWidget *grid = gtk_grid_new();
-    gtk_grid_set_column_homogeneous(GTK_GRID(grid), TRUE);
-    gtk_grid_set_column_spacing(GTK_GRID(grid), 5);
-    gtk_grid_set_row_spacing(GTK_GRID(grid), 5);
+    g_object_set(grid, "column-homogeneous", TRUE, "column-spacing", 5, "row-spacing", 5, "margin", 10, NULL);
     gtk_grid_attach(GTK_GRID(grid), app->entry, 0, 0, 2, 1);
     gtk_grid_attach(GTK_GRID(grid), app->button_start, 0, 1, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), app->button_stop, 1, 1, 1, 1);
-    g_object_set(grid, "margin", 10, NULL);
+    gtk_widget_show_all(GTK_WIDGET(grid));
 
     // Main window
     app->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     g_signal_connect(app->window, "delete-event", (GCallback)gtk_widget_hide_on_delete, NULL);
-    gtk_window_set_icon_name(GTK_WINDOW(app->window), "call-start-symbolic");
-    gtk_window_set_title(GTK_WINDOW(app->window), "Nanotalk");
-    gtk_window_set_resizable(GTK_WINDOW(app->window), FALSE);
+    g_object_set(app->window, "icon-name", "call-start-symbolic", "title", "Nanotalk", "resizable", FALSE, NULL);
     gtk_container_add(GTK_CONTAINER(app->window), GTK_WIDGET(grid));
 
-    // Status icon menu
+    // Status icon
     GtkWidget *menu_quit = gtk_menu_item_new_with_label("Quit");
     g_signal_connect(menu_quit, "activate", (GCallback)gtk_main_quit, NULL);
 
@@ -437,8 +423,7 @@ static gboolean application_init(Application *app, int *argc, char ***argv, GErr
     app->status_icon = gtk_status_icon_new_from_icon_name("call-start-symbolic");
     g_signal_connect(app->status_icon, "popup-menu", (GCallback)popup_menu, app);
     g_signal_connect(app->status_icon, "activate", (GCallback)activate_icon, app);
-    gtk_status_icon_set_tooltip_text(app->status_icon, "Nanotalk");
-    gtk_status_icon_set_title(app->status_icon, "Nanotalk");
+    g_object_set(app->status_icon, "tooltip-text", "Nanotalk", "title", "Nanotalk", NULL);
 
     return TRUE;
 }
