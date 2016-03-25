@@ -14,7 +14,7 @@ if TRACELOG:
 
 if GRAPHS:
     os.environ.update({'GST_DEBUG_DUMP_DOT_DIR': '.'})
-    subprocess.call('rm -f *-pipeline.svg', shell=True)
+    subprocess.call('rm -f *-pipeline.dot.svg', shell=True)
 
 execpath = '../src/nanotalk'
 args1 = 'nanotalk -k test1.key -a aliases.txt'
