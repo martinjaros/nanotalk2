@@ -12,10 +12,15 @@
  * GNU General Public License for more details.
  */
 
+#define G_LOG_DOMAIN "RtpDecrypt"
+
 #include <string.h>
 #include <sodium.h>
 #include <gst/rtp/rtp.h>
 #include "gstrtpdecrypt.h"
+
+GST_DEBUG_CATEGORY_STATIC(gst_rtp_decrypt_debug);
+#define GST_CAT_DEFAULT gst_rtp_decrypt_debug
 
 enum
 {
@@ -50,6 +55,8 @@ static void gst_rtp_decrypt_class_init(GstRtpDecryptClass *klass)
     gst_element_class_add_pad_template(element_class, gst_static_pad_template_get(&sink_template));
     gst_element_class_set_details_simple(element_class,
         "RTP Decrypt", "Filter/Network/RTP", "Decrypts RTP packets", "Martin Jaros <xjaros32@stud.feec.vutbr.cz>");
+
+    GST_DEBUG_CATEGORY_INIT(gst_rtp_decrypt_debug, "rtpdecrypt", 0, "RTP Decrypt");
 }
 
 static void gst_rtp_decrypt_init(GstRtpDecrypt *decrypt)
@@ -103,7 +110,13 @@ static GstFlowReturn gst_rtp_decrypt_chain(GstPad *pad, GstObject *parent, GstBu
     gsize key_len = 0;
     gconstpointer key = decrypt->key ? g_bytes_get_data(decrypt->key, &key_len) : NULL;
     if(key_len != crypto_aead_chacha20poly1305_KEYBYTES)
-        goto error;
+    {
+        GST_ELEMENT_ERROR(decrypt, RESOURCE, SETTINGS, ("Invalid key."),
+            ("expected key size of %u bytes, but got %zu bytes", crypto_aead_chacha20poly1305_KEYBYTES, key_len));
+
+        gst_buffer_unref(inbuf);
+        return GST_FLOW_ERROR;
+    }
 
     GstRTPBuffer rtp_buffer = { };
     if(gst_rtp_buffer_map(inbuf, GST_MAP_READ, &rtp_buffer))
@@ -114,59 +127,51 @@ static GstFlowReturn gst_rtp_decrypt_chain(GstPad *pad, GstObject *parent, GstBu
         guint packet_len = gst_rtp_buffer_get_packet_len(&rtp_buffer);
         gst_rtp_buffer_unmap(&rtp_buffer);
 
-        if(packet_len < crypto_aead_chacha20poly1305_ABYTES)
-            goto error;
+        GstBuffer *outbuf = (packet_len < crypto_aead_chacha20poly1305_ABYTES) ? NULL :
+            gst_buffer_new_allocate(NULL, packet_len - crypto_aead_chacha20poly1305_ABYTES, NULL);
 
-        GstMapInfo inbuf_map;
-        if(!gst_buffer_map(inbuf, &inbuf_map, GST_MAP_READ))
-            goto error;
-
-        GstBuffer *outbuf = gst_buffer_new_allocate(NULL, packet_len - crypto_aead_chacha20poly1305_ABYTES, NULL);
-        if(!outbuf)
+        if(outbuf)
         {
-            gst_buffer_unmap(inbuf, &inbuf_map);
-            goto error;
-        }
+            GstMapInfo inbuf_map;
+            if(gst_buffer_map(inbuf, &inbuf_map, GST_MAP_READ))
+            {
+                GstMapInfo outbuf_map;
+                if(gst_buffer_map(outbuf, &outbuf_map, GST_MAP_WRITE))
+                {
+                    guint64 roc = decrypt->roc;
+                    if((decrypt->s_l < 0x8000) && (decrypt->s_l + 0x8000 < seq) && (roc > 0)) roc--;
+                    if((decrypt->s_l > 0x7FFF) && (decrypt->s_l - 0x8000 > seq)) roc++;
 
-        GstMapInfo outbuf_map;
-        if(!gst_buffer_map(outbuf, &outbuf_map, GST_MAP_WRITE))
-        {
-            gst_buffer_unmap(inbuf, &inbuf_map);
+                    guint64 index = GUINT64_TO_BE((roc << 16) | seq);
+                    if(crypto_aead_chacha20poly1305_decrypt(
+                            outbuf_map.data + header_len, NULL, NULL,
+                            inbuf_map.data + header_len, payload_len,
+                            inbuf_map.data, header_len,
+                            (gconstpointer)&index, key) == 0)
+                    {
+                        decrypt->roc = roc;
+                        decrypt->s_l = seq;
+                        memcpy(outbuf_map.data, inbuf_map.data, header_len);
+                        gst_buffer_unmap(outbuf, &outbuf_map);
+                        gst_buffer_unmap(inbuf, &inbuf_map);
+                        gst_buffer_unref(inbuf);
+
+                        GST_DEBUG_OBJECT(decrypt, "Pushing buffer roc=%lu seq=%hu", roc, seq);
+                        return gst_pad_push(decrypt->src, outbuf);
+                    }
+                    gst_buffer_unmap(outbuf, &outbuf_map);
+                }
+
+                gst_buffer_unmap(inbuf, &inbuf_map);
+            }
+
             gst_buffer_unref(outbuf);
-            goto error;
         }
-
-        guint64 roc = decrypt->roc;
-        if((decrypt->s_l < 0x8000) && (decrypt->s_l + 0x8000 < seq) && (roc > 0)) roc--;
-        if((decrypt->s_l > 0x7FFF) && (decrypt->s_l - 0x8000 > seq)) roc++;
-
-        guint64 index = GUINT64_TO_BE((roc << 16) | seq);
-        if(crypto_aead_chacha20poly1305_decrypt(
-                outbuf_map.data + header_len, NULL, NULL,
-                inbuf_map.data + header_len, payload_len,
-                inbuf_map.data, header_len,
-                (gconstpointer)&index, key) < 0)
-        {
-            gst_buffer_unmap(outbuf, &outbuf_map);
-            gst_buffer_unmap(inbuf, &inbuf_map);
-            gst_buffer_unref(outbuf);
-            gst_buffer_unref(inbuf);
-            return GST_FLOW_OK;
-        }
-
-        decrypt->roc = roc;
-        decrypt->s_l = seq;
-        memcpy(outbuf_map.data, inbuf_map.data, header_len);
-        gst_buffer_unmap(outbuf, &outbuf_map);
-        gst_buffer_unmap(inbuf, &inbuf_map);
-        gst_buffer_unref(inbuf);
-
-        return gst_pad_push(decrypt->src, outbuf);
     }
 
-error:
+    GST_WARNING_OBJECT(decrypt, "Buffer dropped");
     gst_buffer_unref(inbuf);
-    return GST_FLOW_ERROR;
+    return GST_FLOW_OK;
 }
 
 static void gst_rtp_decrypt_finalize(GObject *object)

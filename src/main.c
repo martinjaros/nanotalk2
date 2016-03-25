@@ -28,6 +28,8 @@
 #define DEFAULT_PORT 5004
 #define DEFAULT_IPV6 FALSE
 
+#define RECV_TIMEOUT 3000000000L // 3 seconds
+
 typedef struct _application Application;
 
 struct _application
@@ -90,6 +92,9 @@ static void call_stop(GtkWidget *widget, gpointer arg)
     Application *app = (Application*)arg;
     gtk_widget_set_sensitive(app->button_start, TRUE);
     gtk_widget_set_sensitive(app->button_stop, FALSE);
+
+    gst_debug_bin_to_dot_file_with_ts(GST_BIN(app->tx_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "stop-tx-pipeline");
+    gst_debug_bin_to_dot_file_with_ts(GST_BIN(app->rx_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "stop-rx-pipeline");
 
     // Cleanup pipelines
     gst_element_set_state(app->tx_pipeline, GST_STATE_NULL);
@@ -201,7 +206,7 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
         NULL);
 
     GstElement *rtp_src = gst_element_factory_make("udpsrc", "rtp_src"); g_assert(rtp_src);
-    g_object_set(rtp_src, "caps", caps, "socket", socket, "timeout", 1000000000L, NULL);
+    g_object_set(rtp_src, "caps", caps, "socket", socket, "timeout", RECV_TIMEOUT, NULL);
     gst_caps_unref(caps);
 
     GstElement *rtp_dec = gst_element_factory_make("rtpdecrypt", "rtp_dec"); g_assert(rtp_dec);
@@ -214,6 +219,7 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
 
     gst_bin_add_many(GST_BIN(app->rx_pipeline), rtp_src, rtp_dec, rtp_buf, audio_depay, audio_dec, audio_sink, NULL);
     gst_element_link_many(rtp_src, rtp_dec, rtp_buf, audio_depay, audio_dec, audio_sink, NULL);
+    gst_debug_bin_to_dot_file_with_ts(GST_BIN(app->rx_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "start-rx-pipeline");
     gst_element_set_state(app->rx_pipeline, GST_STATE_PLAYING);
 
     // Start transmitter
@@ -234,6 +240,7 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
 
     gst_bin_add_many(GST_BIN(app->tx_pipeline), audio_src, audio_enc, audio_pay, rtp_enc, rtp_sink, NULL);
     gst_element_link_many(audio_src, audio_enc, audio_pay, rtp_enc, rtp_sink, NULL);
+    gst_debug_bin_to_dot_file_with_ts(GST_BIN(app->tx_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "start-tx-pipeline");
     gst_element_set_state(app->tx_pipeline, GST_STATE_PLAYING);
 }
 
