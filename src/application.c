@@ -207,19 +207,19 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
         "encoding-name", G_TYPE_STRING, "X-GST-OPUS-DRAFT-SPITTKA-00",
         NULL);
 
-    GstElement *rtp_src = gst_element_factory_make("udpsrc", "rtp_src"); g_assert(rtp_src);
+    GstElement *rtp_src = gst_element_factory_make("udpsrc", "rtp_src");
     g_object_set(rtp_src, "caps", caps, "socket", socket, "timeout", RECV_TIMEOUT, NULL);
     gst_caps_unref(caps);
 
-    GstElement *rtp_dec = gst_element_factory_make("rtpdecrypt", "rtp_dec"); g_assert(rtp_dec);
+    GstElement *rtp_dec = gst_element_factory_make("rtpdecrypt", "rtp_dec");
     g_object_set(rtp_dec, "key", dec_key, NULL);
 
-    GstElement *rtp_buf = gst_element_factory_make("rtpjitterbuffer", "rtp_buf"); g_assert(rtp_buf);
-    GstElement *audio_depay = gst_element_factory_make("rtpopusdepay", "audio_depay"); g_assert(audio_depay);
-    GstElement *audio_dec = gst_element_factory_make("opusdec", "audio_dec"); g_assert(audio_dec);
-    GstElement *audio_sink = gst_element_factory_make("autoaudiosink", "audio_sink"); g_assert(audio_sink);
+    GstElement *rtp_buf = gst_element_factory_make("rtpjitterbuffer", "rtp_buf");
+    GstElement *audio_depay = gst_element_factory_make("rtpopusdepay", "audio_depay");
+    GstElement *audio_dec = gst_element_factory_make("opusdec", "audio_dec");
+    GstElement *audio_sink = gst_element_factory_make("autoaudiosink", "audio_sink");
 
-    GstElement *sink_volume = gst_element_factory_make("volume", "sink_volume"); g_assert(sink_volume);
+    GstElement *sink_volume = gst_element_factory_make("volume", "sink_volume");
     g_object_set(sink_volume, "mute", remote, NULL);
 
     gst_bin_add_many(GST_BIN(app->rx_pipeline), rtp_src, rtp_dec, rtp_buf, audio_depay, audio_dec, sink_volume, audio_sink, NULL);
@@ -233,18 +233,18 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     app->tx_watch = gst_bus_add_watch(bus, bus_watch, app);
     gst_object_unref(bus);
 
-    GstElement *src_volume = gst_element_factory_make("volume", "src_volume"); g_assert(src_volume);
+    GstElement *src_volume = gst_element_factory_make("volume", "src_volume");
     g_object_set(src_volume, "mute", remote, NULL);
 
-    GstElement *audio_src = gst_element_factory_make("autoaudiosrc", "audio_src"); g_assert(audio_src);
-    GstElement *audio_enc = gst_element_factory_make("opusenc", "audio_enc"); g_assert(audio_enc);
-    GstElement *audio_pay = gst_element_factory_make("rtpopuspay", "audio_pay"); g_assert(audio_pay);
+    GstElement *audio_src = gst_element_factory_make("autoaudiosrc", "audio_src");
+    GstElement *audio_enc = gst_element_factory_make("opusenc", "audio_enc");
+    GstElement *audio_pay = gst_element_factory_make("rtpopuspay", "audio_pay");
     g_object_set(audio_enc, "cbr", FALSE, "dtx", TRUE, NULL);
 
-    GstElement *rtp_enc = gst_element_factory_make("rtpencrypt", "rtp_enc"); g_assert(rtp_enc);
+    GstElement *rtp_enc = gst_element_factory_make("rtpencrypt", "rtp_enc");
     g_object_set(rtp_enc, "key", enc_key, NULL);
 
-    GstElement *rtp_sink = gst_element_factory_make("udpsink", "rtp_sink"); g_assert(rtp_sink);
+    GstElement *rtp_sink = gst_element_factory_make("udpsink", "rtp_sink");
     g_object_set(rtp_sink, "socket", sink_socket, "host", host, "port", port, NULL);
 
     gst_bin_add_many(GST_BIN(app->tx_pipeline), audio_src, src_volume, audio_enc, audio_pay, rtp_enc, rtp_sink, NULL);
@@ -259,7 +259,7 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
         if(app->sound_file)
         {
             // Play sound file
-            playbin = gst_element_factory_make("playbin", "playbin_loop"); g_assert(playbin);
+            playbin = gst_element_factory_make("playbin", "playbin_loop");
             GstBus *bus = gst_pipeline_get_bus(GST_PIPELINE(playbin));
             playbin_watch = gst_bus_add_watch(bus, bus_watch, app);
             gst_object_unref(bus);
@@ -369,6 +369,37 @@ static gboolean application_init(Application *app, int *argc, char ***argv, GErr
     g_option_context_add_group(context, gst_init_get_option_group());
     if(!g_option_context_parse(context, argc, argv, error))
         return FALSE;
+
+    // Check GStreamer plugins
+    GstRegistry *registry = gst_registry_get();
+    if(!gst_registry_check_feature_version(registry, "playbin", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO) ||
+       !gst_registry_check_feature_version(registry, "volume", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO))
+    {
+        g_warning("Missing GStreamer Base Plugins");
+        if(error) *error = g_error_new_literal(GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, "Cannot load plugin");
+        return FALSE;
+    }
+
+    if(!gst_registry_check_feature_version(registry, "udpsrc", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO) ||
+       !gst_registry_check_feature_version(registry, "udpsink", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO) ||
+       !gst_registry_check_feature_version(registry, "autoaudiosrc", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO) ||
+       !gst_registry_check_feature_version(registry, "autoaudiosink", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO) ||
+       !gst_registry_check_feature_version(registry, "rtpjitterbuffer", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO))
+    {
+        g_warning("Missing GStreamer Good Plugins");
+        if(error) *error = g_error_new_literal(GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, "Cannot load plugin");
+        return FALSE;
+    }
+
+    if(!gst_registry_check_feature_version(registry, "rtpopusdepay", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO) ||
+       !gst_registry_check_feature_version(registry, "opusdec", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO) ||
+       !gst_registry_check_feature_version(registry, "opusenc", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO) ||
+       !gst_registry_check_feature_version(registry, "rtpopuspay", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO))
+    {
+        g_warning("Missing Opus plugin for GStreamer");
+        if(error) *error = g_error_new_literal(GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, "Cannot load plugin");
+        return FALSE;
+    }
 
     if(!gst_plugin_register_static(GST_VERSION_MAJOR, GST_VERSION_MINOR, "rtpcrypto", "RTP encryption/decryption",
             plugin_init, PACKAGE_VERSION, "GPL", PACKAGE_TARNAME, PACKAGE_NAME, PACKAGE_URL))
