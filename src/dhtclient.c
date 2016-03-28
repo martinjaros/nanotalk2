@@ -45,6 +45,12 @@ enum
     PROP_KEY_SIZE,
     PROP_ID,
     PROP_PEERS,
+    PROP_UPTIME,
+    PROP_RECEPTION_TIME,
+    PROP_PACKETS_RECEIVED,
+    PROP_PACKETS_SENT,
+    PROP_BYTES_RECEIVED,
+    PROP_BYTES_SENT,
     PROP_PUBLIC_ADDRESS,
 };
 
@@ -154,12 +160,17 @@ struct _dht_client_private
     GHashTable *lookup_table; // elements type of DhtLookup
     GList *connections; // elements type of DhtConnection
 
-    guint8 public_address[ADDR_SIZE_MAX];
-    guint16 public_port;
-
     GSocket *socket;
     GSocketFamily family; // G_SOCKET_FAMILY_IPV4 or G_SOCKET_FAMILY_IPV6
     guint io_source, timeout_source; // GSource ID within default context
+
+    // Statistics
+    gint64 start_time, reception_time; // microseconds
+    guint64 packets_received, packets_sent;
+    guint64 bytes_received, bytes_sent;
+
+    guint8 public_address[ADDR_SIZE_MAX]; // as reported by peers
+    guint16 public_port;
 };
 
 static guint dht_client_signals[LAST_SIGNAL];
@@ -281,6 +292,53 @@ static void dht_client_class_init(DhtClientClass *client_class)
     g_object_class_install_property(object_class, PROP_PEERS,
             g_param_spec_uint("peers", "Peers", "Number of peers", 0, G_MAXUINT, 0,
                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+    /**
+     * DhtClient:uptime:
+     * Number of microseconds since client creation.
+     */
+    g_object_class_install_property(object_class, PROP_UPTIME,
+            g_param_spec_int64("uptime", "Uptime", "Time since creation", 0, G_MAXINT64, 0,
+                    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+
+    /**
+     * DhtClient:reception-time:
+     * Number of microseconds since last message reception.
+     */
+    g_object_class_install_property(object_class, PROP_RECEPTION_TIME,
+            g_param_spec_int64("reception-time", "Reception time", "Time since last message", 0, G_MAXINT64, 0,
+                    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+
+    /**
+     * DhtClient:packets-received:
+     * Total number of received packets.
+     */
+    g_object_class_install_property(object_class, PROP_PACKETS_RECEIVED,
+            g_param_spec_uint64("packets-received", "Packets received", "Number of received packets", 0, G_MAXUINT64, 0,
+                    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+
+    /**
+     * DhtClient:packets-sent:
+     * Total number of sent packets.
+     */
+    g_object_class_install_property(object_class, PROP_PACKETS_SENT,
+            g_param_spec_uint64("packets-sent", "Packets sent", "Number of sent packets", 0, G_MAXUINT64, 0,
+                    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+
+    /**
+     * DhtClient:bytes-received:
+     * Total number of received bytes.
+     */
+    g_object_class_install_property(object_class, PROP_BYTES_RECEIVED,
+            g_param_spec_uint64("bytes-received", "Bytes received", "Number of received bytes", 0, G_MAXUINT64, 0,
+                    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+
+    /**
+     * DhtClient:packets-sent:
+     * Total number of sent bytes.
+     */
+    g_object_class_install_property(object_class, PROP_BYTES_SENT,
+            g_param_spec_uint64("bytes-sent", "Bytes sent", "Number of sent bytes", 0, G_MAXUINT64, 0,
+                    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     /**
      * DhtClient:public-address:
@@ -389,7 +447,15 @@ gboolean dht_client_bootstrap(DhtClient *client, const gchar *host, guint16 port
         msg.type = MSG_LOOKUP_REQ;
         memcpy(msg.srcid, priv->id, DHT_HASH_SIZE);
         memcpy(msg.dstid, priv->id, DHT_HASH_SIZE);
-        return g_socket_send_to(priv->socket, sockaddr, (gchar*)&msg, sizeof(msg), NULL, error) > 0;
+        gssize res = g_socket_send_to(priv->socket, sockaddr, (gchar*)&msg, sizeof(msg), NULL, error);
+        if(res >= 0)
+        {
+            priv->packets_sent++;
+            priv->bytes_sent += res;
+            return TRUE;
+        }
+
+        return FALSE;
     }
 
     if(error) *error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE, "Unknown host");
@@ -530,6 +596,42 @@ static void dht_client_get_property(GObject *obj, guint prop, GValue *value, GPa
             break;
         }
 
+        case PROP_UPTIME:
+        {
+            g_value_set_int64(value, g_get_monotonic_time() - priv->start_time);
+            break;
+        }
+
+        case PROP_RECEPTION_TIME:
+        {
+            g_value_set_int64(value, priv->reception_time ? g_get_monotonic_time() - priv->reception_time : 0);
+            break;
+        }
+
+        case PROP_PACKETS_RECEIVED:
+        {
+            g_value_set_uint64(value, priv->packets_received);
+            break;
+        }
+
+        case PROP_PACKETS_SENT:
+        {
+            g_value_set_uint64(value, priv->packets_sent);
+            break;
+        }
+
+        case PROP_BYTES_RECEIVED:
+        {
+            g_value_set_uint64(value, priv->bytes_received);
+            break;
+        }
+
+        case PROP_BYTES_SENT:
+        {
+            g_value_set_uint64(value, priv->bytes_sent);
+            break;
+        }
+
         case PROP_PUBLIC_ADDRESS:
         {
             g_autoptr(GInetAddress) in_addr = g_inet_address_new_from_bytes(priv->public_address, priv->family);
@@ -564,6 +666,7 @@ static void dht_client_constructed(GObject *obj)
     g_source_set_callback(source, (GSourceFunc)dht_client_receive, client, NULL);
     priv->io_source = g_source_attach(source, g_main_context_default());
     priv->timeout_source = g_timeout_add(DHT_REFRESH_MS, dht_client_refresh, client);
+    priv->start_time = g_get_monotonic_time();
 
     // Chain to parent
     G_OBJECT_CLASS(dht_client_parent_class)->constructed(obj);
@@ -653,6 +756,9 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
         gsize addr_size = ADDR_SIZE(priv->family);
         gsize node_size = sizeof(MsgNode) + addr_size;
 
+        priv->reception_time = g_get_monotonic_time();
+        priv->packets_received++;
+        priv->bytes_received += len;
         switch(*(guint8*)buffer)
         {
             case MSG_LOOKUP_REQ:
@@ -660,15 +766,37 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
                 if(len != sizeof(MsgLookup)) break;
                 MsgLookup *msg = (MsgLookup*)buffer;
 
+                // Ignore own ID
                 if(memcmp(msg->srcid, priv->id, DHT_HASH_SIZE) == 0) break;
-                dht_client_update(client, msg->srcid, TRUE, addr, port);
+                if((priv->root_bucket.count == 0) && !priv->root_bucket.next)
+                {
+                    // Bootstrap to sender
+                    MsgLookup request;
+                    request.type = MSG_LOOKUP_REQ;
+                    memcpy(request.srcid, priv->id, DHT_HASH_SIZE);
+                    memcpy(request.dstid, priv->id, DHT_HASH_SIZE);
+                    gssize res = g_socket_send_to(priv->socket, sockaddr, (gchar*)&request, sizeof(request), NULL, NULL);
+                    if(res >= 0)
+                    {
+                        priv->packets_sent++;
+                        priv->bytes_sent += res;
+                    }
+                }
+
                 g_debug("received lookup request");
+                dht_client_update(client, msg->srcid, TRUE, addr, port);
 
                 // Send response
                 msg->type = MSG_LOOKUP_RES;
                 memcpy(msg->srcid, priv->id, DHT_HASH_SIZE);
                 gsize count = dht_client_search(client, msg->dstid, msg->nodes);
-                g_socket_send_to(socket, sockaddr, buffer, len + count * node_size, NULL, NULL);
+                gssize res = g_socket_send_to(socket, sockaddr, buffer, len + count * node_size, NULL, NULL);
+                if(res >= 0)
+                {
+                    priv->packets_sent++;
+                    priv->bytes_sent += res;
+                }
+
                 break;
             }
 
@@ -678,9 +806,11 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
                 if(len != sizeof(MsgLookup) + node_size * count) break;
                 MsgLookup *msg = (MsgLookup*)buffer;
 
+                // Ignore own ID
                 if(memcmp(msg->srcid, priv->id, DHT_HASH_SIZE) == 0) break;
-                dht_client_update(client, msg->srcid, TRUE, addr, port);
+
                 g_debug("received lookup response");
+                dht_client_update(client, msg->srcid, TRUE, addr, port);
 
                 // Find lookup
                 DhtLookup *lookup = g_hash_table_lookup(priv->lookup_table, msg->dstid);
@@ -758,9 +888,9 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
                 }
                 else
                 {
-                    // Send empty packet to reject the connection
-                    g_socket_send_to(socket, sockaddr, NULL, 0, NULL, NULL);
                     g_debug("connection rejected");
+                    if(g_socket_send_to(socket, sockaddr, NULL, 0, NULL, NULL) == 0)
+                        priv->packets_sent++;
                 }
 
                 break;
@@ -1043,7 +1173,12 @@ static gboolean dht_lookup_dispatch(DhtLookup *lookup, gboolean emit_error, GErr
 
             g_autoptr(GInetAddress) in_addr = g_inet_address_new_from_bytes(query->addr, priv->family);
             g_autoptr(GSocketAddress) sockaddr = g_inet_socket_address_new(in_addr, query->port);
-            g_socket_send_to(priv->socket, sockaddr, (gchar*)&msg, sizeof(msg), NULL, NULL);
+            gssize res = g_socket_send_to(priv->socket, sockaddr, (gchar*)&msg, sizeof(msg), NULL, NULL);
+            if(res >= 0)
+            {
+                priv->packets_sent++;
+                priv->bytes_sent += res;
+            }
 
             // Attach timer
             query->timeout_source = g_timeout_add(DHT_TIMEOUT_MS, dht_query_timeout, query);
