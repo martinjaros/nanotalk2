@@ -26,8 +26,6 @@
 #include "dhtclient.h"
 
 #define DEFAULT_PORT 5004
-#define DEFAULT_IPV6 FALSE
-
 #define RECV_TIMEOUT 3000000000L // 3 seconds
 
 typedef struct _application Application;
@@ -57,9 +55,8 @@ static void lookup_start(Application *app, const gchar *id)
     gtk_widget_set_sensitive(app->button_start, FALSE);
 }
 
-static void call_start(GtkWidget *widget, gpointer arg)
+static void call_start(GtkWidget *widget, Application *app)
 {
-    Application *app = (Application*)arg;
     const gchar *text = gtk_entry_get_text(GTK_ENTRY(app->entry));
 
     // Translate alias to ID
@@ -80,9 +77,8 @@ static void call_start(GtkWidget *widget, gpointer arg)
         lookup_start(app, text);
 }
 
-static void call_stop(GtkWidget *widget, gpointer arg)
+static void call_stop(GtkWidget *widget, Application *app)
 {
-    Application *app = (Application*)arg;
     gtk_widget_set_sensitive(app->button_start, TRUE);
     gtk_widget_set_sensitive(app->button_stop, FALSE);
 
@@ -105,9 +101,16 @@ static void call_stop(GtkWidget *widget, gpointer arg)
     }
 }
 
-static gboolean bus_watch(GstBus *bus, GstMessage *message, gpointer arg)
+static void call_toggle(GtkWidget *widget, Application *app)
 {
-    Application *app = (Application*)arg;
+    if(gtk_widget_is_sensitive(app->button_start))
+        call_start(app->button_start, app);
+    else if(gtk_widget_is_sensitive(app->button_stop))
+        call_stop(app->button_stop, app);
+}
+
+static gboolean bus_watch(GstBus *bus, GstMessage *message, Application *app)
+{
     switch(message->type)
     {
         case GST_MESSAGE_ERROR:
@@ -151,9 +154,8 @@ static gboolean bus_watch(GstBus *bus, GstMessage *message, gpointer arg)
     return TRUE;
 }
 
-static gboolean accept_connection(DhtClient *client, const gchar *id, gpointer arg)
+static gboolean accept_connection(DhtClient *client, const gchar *id, Application *app)
 {
-    Application *app = (Application*)arg;
     if(gtk_widget_is_sensitive(app->button_start))
     {
         gtk_widget_set_sensitive(app->button_start, FALSE);
@@ -164,10 +166,8 @@ static gboolean accept_connection(DhtClient *client, const gchar *id, gpointer a
 }
 
 static void new_connection(DhtClient *client, const gchar *peer_id,
-        GSocket *socket, GSocketAddress *sockaddr, GBytes *enc_key, GBytes *dec_key, gboolean remote, gpointer arg)
+        GSocket *socket, GSocketAddress *sockaddr, GBytes *enc_key, GBytes *dec_key, gboolean remote, Application *app)
 {
-    Application *app = (Application*)arg;
-
     // Translate ID to alias
     GtkTreeIter iter;
     gboolean valid = gtk_tree_model_get_iter_first(GTK_TREE_MODEL(app->completions), &iter);
@@ -198,7 +198,7 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     // Start receiver
     app->rx_pipeline = gst_pipeline_new("rx_pipeline");
     GstBus *bus = gst_pipeline_get_bus(GST_PIPELINE(app->rx_pipeline));
-    app->rx_watch = gst_bus_add_watch(bus, bus_watch, app);
+    app->rx_watch = gst_bus_add_watch(bus, (GstBusFunc)bus_watch, app);
     gst_object_unref(bus);
 
     GstCaps *caps = gst_caps_new_simple("application/x-rtp",
@@ -230,7 +230,7 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     // Start transmitter
     app->tx_pipeline = gst_pipeline_new("tx_pipeline");
     bus = gst_pipeline_get_bus(GST_PIPELINE(app->tx_pipeline));
-    app->tx_watch = gst_bus_add_watch(bus, bus_watch, app);
+    app->tx_watch = gst_bus_add_watch(bus, (GstBusFunc)bus_watch, app);
     gst_object_unref(bus);
 
     GstElement *src_volume = gst_element_factory_make("volume", "src_volume");
@@ -261,7 +261,7 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
             // Play sound file
             playbin = gst_element_factory_make("playbin", "playbin_loop");
             GstBus *bus = gst_pipeline_get_bus(GST_PIPELINE(playbin));
-            playbin_watch = gst_bus_add_watch(bus, bus_watch, app);
+            playbin_watch = gst_bus_add_watch(bus, (GstBusFunc)bus_watch, app);
             gst_object_unref(bus);
 
             g_autofree gchar *uri = gst_filename_to_uri(app->sound_file, NULL);
@@ -302,34 +302,22 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
         gtk_widget_show(app->window);
 }
 
-static void on_error(DhtClient *client, const gchar *id, GError *error, gpointer arg)
+static void on_error(DhtClient *client, const gchar *id, GError *error, Application *app)
 {
-    Application *app = (Application*)arg;
     gtk_widget_set_sensitive(app->button_start, TRUE);
     g_info("%s %s", id, error->message);
 }
 
-static void activate_entry(GtkWidget *widget, gpointer arg)
+static void window_toggle(GtkWidget *widget, Application *app)
 {
-    Application *app = (Application*)arg;
-    if(gtk_widget_is_sensitive(app->button_start))
-        call_start(app->button_start, app);
-    else if(gtk_widget_is_sensitive(app->button_stop))
-        call_stop(app->button_stop, app);
-}
-
-static void activate_icon(GtkWidget *widget, gpointer arg)
-{
-    Application *app = (Application*)arg;
     if(!gtk_widget_get_visible(app->window))
         gtk_widget_show(app->window);
     else
         gtk_widget_hide(app->window);
 }
 
-static void popup_menu(GtkWidget *widget, guint button, guint activate_time, gpointer arg)
+static void menu_popup(GtkWidget *widget, guint button, guint activate_time, Application *app)
 {
-    Application *app = (Application*)arg;
     gtk_menu_popup(GTK_MENU(app->menu), NULL, NULL, gtk_status_icon_position_menu, widget, button, activate_time);
 }
 
@@ -346,7 +334,7 @@ static gboolean application_init(Application *app, int *argc, char ***argv, GErr
     g_autofree gchar *bootstrap_host = NULL;
     gint bootstrap_port = DEFAULT_PORT;
     gint local_port = DEFAULT_PORT;
-    gboolean ipv6 = DEFAULT_IPV6;
+    gboolean ipv6 = FALSE;
 
     GOptionEntry options[] =
     {
@@ -482,7 +470,7 @@ static gboolean application_init(Application *app, int *argc, char ***argv, GErr
 
     // Create widgets
     app->entry = gtk_entry_new();
-    g_signal_connect(app->entry, "activate", (GCallback)activate_entry, app);
+    g_signal_connect(app->entry, "activate", (GCallback)call_toggle, app);
     app->button_start = gtk_button_new_from_icon_name("call-start", GTK_ICON_SIZE_BUTTON);
     g_signal_connect(app->button_start, "clicked", (GCallback)call_start, app);
     app->button_stop = gtk_button_new_from_icon_name("call-stop", GTK_ICON_SIZE_BUTTON);
@@ -519,8 +507,8 @@ static gboolean application_init(Application *app, int *argc, char ***argv, GErr
     gtk_widget_show_all(app->menu);
 
     app->status_icon = gtk_status_icon_new_from_icon_name("call-start-symbolic");
-    g_signal_connect(app->status_icon, "popup-menu", (GCallback)popup_menu, app);
-    g_signal_connect(app->status_icon, "activate", (GCallback)activate_icon, app);
+    g_signal_connect(app->status_icon, "popup-menu", (GCallback)menu_popup, app);
+    g_signal_connect(app->status_icon, "activate", (GCallback)window_toggle, app);
     g_object_set(app->status_icon, "tooltip-text", "Nanotalk", "title", "Nanotalk", NULL);
 
     return TRUE;
