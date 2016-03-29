@@ -12,8 +12,11 @@
  * GNU General Public License for more details.
  */
 
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif /* HAVE_CONFIG_H */
+
 #include "dhtclient.h"
-#include "server.h"
 
 #define DEFAULT_PORT 5004
 #define REPORT_PERIOD 10000 // 10 seconds
@@ -62,14 +65,53 @@ static gboolean print_report(DhtClient *client)
 int main(int argc, char **argv)
 {
     GError *error = NULL;
-    GBytes *key = g_bytes_new_static(server_key, server_key_len);
-    DhtClient *client = dht_client_new(G_SOCKET_FAMILY_IPV4, DEFAULT_PORT, key, &error);
+    GBytes *key = NULL;
+    gchar *key_path = NULL;
+    gint local_port = DEFAULT_PORT;
+    gboolean ipv6 = FALSE;
+    GOptionEntry options[] =
+    {
+        { "key", 'k', 0, G_OPTION_ARG_FILENAME, &key_path, "Private key", "FILE" },
+        { "local-port", 'l', 0, G_OPTION_ARG_INT, &local_port, "Source port (default " G_STRINGIFY(DEFAULT_PORT) ")", "NUM" },
+        { "ipv6", '6', 0, G_OPTION_ARG_NONE, &ipv6, "Enable IPv6", NULL },
+        { NULL }
+    };
+
+    // Parse command line
+    GOptionContext *context = g_option_context_new(NULL);
+    g_option_context_set_summary(context, PACKAGE_STRING);
+    g_option_context_add_main_entries(context, options, NULL);
+    if(!g_option_context_parse(context, &argc, &argv, &error))
+    {
+        g_printerr("%s\n", error->message);
+        return 1;
+    }
+
+    if(key_path)
+    {
+        // Load key from file
+        g_autoptr(GFile) file = g_file_new_for_path(key_path);
+        gsize len = DHT_KEY_SIZE;
+        guint8 buffer[len];
+
+        g_autoptr(GInputStream) stream = G_INPUT_STREAM(g_file_read(file, NULL, &error));
+        if(!stream || !g_input_stream_read_all(stream, buffer, sizeof(buffer), &len, NULL, &error))
+        {
+            g_printerr("Failed to read key from %s. %s\n", key_path, error->message);
+            return 1;
+        }
+
+        key = g_bytes_new(buffer, len);
+    }
+
+    DhtClient *client = dht_client_new(ipv6 ? G_SOCKET_FAMILY_IPV6 : G_SOCKET_FAMILY_IPV4, local_port, key, &error);
     if(!client)
     {
         g_printerr("%s\n", error->message);
         return 1;
     }
 
+    print_report(client);
     g_timeout_add(REPORT_PERIOD, (GSourceFunc)print_report, client);
     g_main_loop_run(g_main_loop_new(NULL, FALSE));
     return 0;
