@@ -20,11 +20,13 @@
 
 #define DHT_NONCE_SIZE 32
 #define DHT_HASH_SIZE  20
-#define DHT_NODE_COUNT 16
 
-#define DHT_CONCURRENCY 3
-#define DHT_TIMEOUT_MS  1000  // 1 second
-#define DHT_REFRESH_MS  60000 // 1 minute
+#define DHT_NODE_COUNT 16 // number of nodes per bucket
+#define DHT_CONCURRENCY 3 // number of concurrent requests per lookup
+
+#define DHT_TIMEOUT_MS   1000 // request timeout (1 second)
+#define DHT_REFRESH_MS  60000 // refresh period (1 minute)
+#define DHT_LINGER_MS 3600000 // dead node linger (1 hour)
 
 /* Message codes */
 #define MSG_LOOKUP_REQ     0xC0
@@ -106,6 +108,7 @@ struct _dht_node
     guint16 port; // host byte order
 
     gboolean is_alive;
+    gint64 last_seen; // monotonic timestamp (microseconds)
 };
 
 struct _dht_bucket
@@ -124,7 +127,7 @@ struct _dht_query // use slice allocator
 
     DhtLookup *parent;
     guint timeout_source; // GSource ID within default context or 0
-    gboolean is_finished;
+    gboolean is_finished, is_alive;
 };
 
 struct _dht_lookup
@@ -165,7 +168,7 @@ struct _dht_client_private
     guint io_source, timeout_source; // GSource ID within default context
 
     // Statistics
-    gint64 start_time, reception_time; // microseconds
+    gint64 start_time, reception_time;  // monotonic timestamp (microseconds)
     guint64 packets_received, packets_sent;
     guint64 bytes_received, bytes_sent;
 
@@ -822,6 +825,7 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
                         // Finalize existing query
                         DhtQuery *query = g_sequence_get(iter);
                         query->is_finished = TRUE;
+                        query->is_alive = TRUE;
                         if(query->timeout_source)
                         {
                             g_source_remove(query->timeout_source);
@@ -837,6 +841,7 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
                         memcpy(query->addr, addr, addr_size);
                         query->port = port;
                         query->is_finished = TRUE;
+                        query->is_alive = TRUE;
                         query->parent = lookup;
                         g_sequence_insert_sorted(lookup->queries, query, dht_compare_func, NULL);
                     }
@@ -925,6 +930,7 @@ static void dht_client_update(DhtClient *client, gconstpointer id, gboolean is_a
             {
                 memcpy(bucket->nodes[i].addr, addr, addr_size);
                 bucket->nodes[i].port = port;
+                bucket->nodes[i].last_seen = priv->reception_time;
             }
 
             return;
@@ -963,7 +969,8 @@ static void dht_client_update(DhtClient *client, gconstpointer id, gboolean is_a
     {
         // Append new node
         memcpy(bucket->nodes[bucket->count].id, id, DHT_HASH_SIZE);
-        bucket->nodes[bucket->count].is_alive = is_alive;
+        bucket->nodes[bucket->count].is_alive = TRUE;
+        bucket->nodes[bucket->count].last_seen = priv->reception_time;
 
         memcpy(bucket->nodes[bucket->count].addr, addr, addr_size);
         bucket->nodes[bucket->count].port = port;
@@ -977,7 +984,8 @@ static void dht_client_update(DhtClient *client, gconstpointer id, gboolean is_a
         {
             // Replace dead node
             memcpy(bucket->nodes[i].id, id, DHT_HASH_SIZE);
-            bucket->nodes[i].is_alive = is_alive;
+            bucket->nodes[i].is_alive = TRUE;
+            bucket->nodes[i].last_seen = priv->reception_time;
 
             memcpy(bucket->nodes[i].addr, addr, addr_size);
             bucket->nodes[i].port = port;
@@ -994,6 +1002,7 @@ static gsize dht_client_search(DhtClient *client, gconstpointer id, gpointer nod
     gsize addr_size = ADDR_SIZE(priv->family);
     gsize node_size = sizeof(MsgNode) + addr_size;
 
+    gint64 current_time = g_get_monotonic_time();
     guint8 metric[DHT_HASH_SIZE], nbits = 0, dir = 1;
     dht_memxor(metric, priv->id, id);
 
@@ -1004,8 +1013,12 @@ static gsize dht_client_search(DhtClient *client, gconstpointer id, gpointer nod
         if(!(metric[nbits / 8] & (0x80 >> (nbits % 8))) == !dir)
         {
             int i;
-            for(i = 0; (i < bucket->count) && (count < DHT_NODE_COUNT); i++, count++)
+            for(i = 0; (i < bucket->count) && (count < DHT_NODE_COUNT); i++)
             {
+                // Ignore timed out nodes
+                if(!bucket->nodes[i].is_alive && (current_time - bucket->nodes[i].last_seen > DHT_LINGER_MS * 1000L))
+                    continue;
+
                 MsgNode *node = node_ptr;
                 node_ptr += node_size;
 
@@ -1013,6 +1026,7 @@ static gsize dht_client_search(DhtClient *client, gconstpointer id, gpointer nod
                 memcpy(node->id, bucket->nodes[i].id, DHT_HASH_SIZE);
                 memcpy(node->addr, bucket->nodes[i].addr, addr_size);
                 node->port = GUINT16_TO_BE(bucket->nodes[i].port);
+                count++;
             }
         }
 
@@ -1158,9 +1172,9 @@ static gboolean dht_lookup_dispatch(DhtLookup *lookup, gboolean emit_error, GErr
     DhtClient *client = lookup->parent;
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
 
-    gsize count = 0;
+    gsize num_alive = 0;
     GSequenceIter *iter = g_sequence_get_begin_iter(lookup->queries);
-    while(!g_sequence_iter_is_end(iter) && (lookup->num_sources < DHT_CONCURRENCY) && (count < DHT_NODE_COUNT))
+    while(!g_sequence_iter_is_end(iter) && (lookup->num_sources < DHT_CONCURRENCY) && (num_alive < DHT_NODE_COUNT))
     {
         DhtQuery *query = g_sequence_get(iter);
         if(!query->is_finished && !query->timeout_source)
@@ -1185,8 +1199,8 @@ static gboolean dht_lookup_dispatch(DhtLookup *lookup, gboolean emit_error, GErr
             lookup->num_sources++;
         }
 
+        if(query->is_alive) num_alive++;
         iter = g_sequence_iter_next(iter);
-        count++;
     }
 
     if(lookup->num_sources == 0)
