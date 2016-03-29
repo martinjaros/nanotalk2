@@ -223,13 +223,10 @@ static gint dht_compare_func(gconstpointer a, gconstpointer b, gpointer arg)
     return memcmp(a, b, DHT_HASH_SIZE);
 }
 
-static void dht_kdf(gconstpointer sk, gconstpointer pk, gconstpointer rx_nonce, gconstpointer tx_nonce,
+static void dht_kdf(gconstpointer secret, gconstpointer rx_nonce, gconstpointer tx_nonce,
         gpointer enc_key, gpointer dec_key, gsize key_size)
 {
     crypto_generichash_state state;
-
-    guint8 secret[crypto_scalarmult_BYTES];
-    crypto_scalarmult(secret, sk, pk);
 
     crypto_generichash_init(&state, secret, crypto_scalarmult_BYTES, key_size);
     crypto_generichash_update(&state, rx_nonce, DHT_NONCE_SIZE);
@@ -856,6 +853,9 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
                 if(len != sizeof(MsgConnection)) break;
                 MsgConnection *msg = (MsgConnection*)buffer;
 
+                guint8 secret[crypto_scalarmult_BYTES];
+                if(crypto_scalarmult(secret, priv->sk, msg->pk) != 0) break;
+
                 guint8 id[DHT_HASH_SIZE];
                 crypto_generichash(id, DHT_HASH_SIZE, msg->pk, crypto_scalarmult_BYTES, NULL, 0);
                 g_autofree gchar *id_base64 = g_base64_encode(id, DHT_HASH_SIZE);
@@ -878,7 +878,7 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
                     // Derive keys
                     guint8 enc_key[priv->key_size];
                     guint8 dec_key[priv->key_size];
-                    dht_kdf(priv->sk, msg->pk, msg->nonce, response.nonce, enc_key, dec_key, priv->key_size);
+                    dht_kdf(secret, msg->nonce, response.nonce, enc_key, dec_key, priv->key_size);
 
                     // Signal new connection
                     g_autoptr(GBytes) enc_key_bytes = g_bytes_new(enc_key, sizeof(enc_key));
@@ -1249,23 +1249,27 @@ static gboolean dht_connection_receive(GSocket *socket, GIOCondition condition, 
     MsgConnection *msg = (MsgConnection*)buffer;
     if((len == sizeof(MsgConnection)) && (msg->type == MSG_CONNECTION_RES))
     {
-        // Derive keys
-        guint8 enc_key[priv->key_size];
-        guint8 dec_key[priv->key_size];
-        dht_kdf(priv->sk, msg->pk, msg->nonce, connection->nonce, enc_key, dec_key, priv->key_size);
-
         // Verify ID
         guint8 id[DHT_HASH_SIZE];
         crypto_generichash(id, DHT_HASH_SIZE, msg->pk, crypto_scalarmult_BYTES, NULL, 0);
         if(memcmp(id, connection->id, DHT_HASH_SIZE) == 0)
         {
-            g_debug("received connection response %s", id_base64);
-            g_autoptr(GBytes) enc_key_bytes = g_bytes_new(enc_key, sizeof(enc_key));
-            g_autoptr(GBytes) dec_key_bytes = g_bytes_new(dec_key, sizeof(dec_key));
-            g_signal_emit(client, dht_client_signals[SIGNAL_NEW_CONNECTION], 0,
-                    id_base64, socket, sockaddr, enc_key_bytes, dec_key_bytes, FALSE);
+            guint8 secret[crypto_scalarmult_BYTES];
+            if(crypto_scalarmult(secret, priv->sk, msg->pk) == 0)
+            {
+                // Derive keys
+                guint8 enc_key[priv->key_size];
+                guint8 dec_key[priv->key_size];
+                dht_kdf(secret, msg->nonce, connection->nonce, enc_key, dec_key, priv->key_size);
 
-            goto finalize;
+                g_debug("received connection response %s", id_base64);
+                g_autoptr(GBytes) enc_key_bytes = g_bytes_new(enc_key, sizeof(enc_key));
+                g_autoptr(GBytes) dec_key_bytes = g_bytes_new(dec_key, sizeof(dec_key));
+                g_signal_emit(client, dht_client_signals[SIGNAL_NEW_CONNECTION], 0,
+                        id_base64, socket, sockaddr, enc_key_bytes, dec_key_bytes, FALSE);
+
+                goto finalize;
+            }
         }
     }
 
