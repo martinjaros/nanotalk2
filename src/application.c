@@ -32,7 +32,7 @@ typedef struct _application Application;
 
 struct _application
 {
-    GtkWidget *window, *entry, *button_start, *button_stop, *menu;
+    GtkWidget *window, *entry, *button_start, *button_stop, *menu, *dialog;
     GtkStatusIcon *status_icon;
     GtkListStore *completions;
     DhtClient *client;
@@ -79,8 +79,11 @@ static void call_start(GtkWidget *widget, Application *app)
 
 static void call_stop(GtkWidget *widget, Application *app)
 {
-    gtk_widget_set_sensitive(app->button_start, TRUE);
-    gtk_widget_set_sensitive(app->button_stop, FALSE);
+    if(app->dialog)
+    {
+        gtk_dialog_response(GTK_DIALOG(app->dialog), GTK_RESPONSE_CANCEL);
+        return;
+    }
 
     if(app->tx_pipeline)
     {
@@ -99,6 +102,9 @@ static void call_stop(GtkWidget *widget, Application *app)
         gst_object_unref(app->rx_pipeline);
         app->rx_pipeline = NULL;
     }
+
+    gtk_widget_set_sensitive(app->button_start, TRUE);
+    gtk_widget_set_sensitive(app->button_stop, FALSE);
 }
 
 static void call_toggle(GtkWidget *widget, Application *app)
@@ -119,15 +125,6 @@ static gboolean bus_watch(GstBus *bus, GstMessage *message, Application *app)
             g_autofree gchar *debug = NULL;
             gst_message_parse_error(message, &error, &debug);
             g_warning("%s %s", error->message, debug);
-            break;
-        }
-
-        case GST_MESSAGE_WARNING:
-        {
-            // Stop pipeline on socket error
-            if(strcmp(GST_OBJECT_NAME(message->src), "rtp_sink") == 0)
-                call_stop(app->button_stop, app);
-
             break;
         }
 
@@ -188,13 +185,6 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     // Display direct ID if no alias was found
     if(!valid) gtk_entry_set_text(GTK_ENTRY(app->entry), peer_id);
 
-    // Connect sink socket to receive ICMP errors
-    g_autoptr(GSocket) sink_socket = g_socket_new(g_socket_get_family(socket), G_SOCKET_TYPE_DATAGRAM, G_SOCKET_PROTOCOL_UDP, NULL);
-    g_socket_connect(sink_socket, sockaddr, NULL, NULL);
-
-    g_autofree gchar *host = g_inet_address_to_string(g_inet_socket_address_get_address(G_INET_SOCKET_ADDRESS(sockaddr)));
-    gint port = g_inet_socket_address_get_port(G_INET_SOCKET_ADDRESS(sockaddr));
-
     // Start receiver
     app->rx_pipeline = gst_pipeline_new("rx_pipeline");
     GstBus *bus = gst_pipeline_get_bus(GST_PIPELINE(app->rx_pipeline));
@@ -244,8 +234,11 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     GstElement *rtp_enc = gst_element_factory_make("rtpencrypt", "rtp_enc");
     g_object_set(rtp_enc, "key", enc_key, NULL);
 
+    g_autofree gchar *host = g_inet_address_to_string(g_inet_socket_address_get_address(G_INET_SOCKET_ADDRESS(sockaddr)));
+    gint port = g_inet_socket_address_get_port(G_INET_SOCKET_ADDRESS(sockaddr));
+
     GstElement *rtp_sink = gst_element_factory_make("udpsink", "rtp_sink");
-    g_object_set(rtp_sink, "socket", sink_socket, "host", host, "port", port, NULL);
+    g_object_set(rtp_sink, "socket", socket, "close-socket", FALSE, "host", host, "port", port, NULL);
 
     gst_bin_add_many(GST_BIN(app->tx_pipeline), audio_src, src_volume, audio_enc, audio_pay, rtp_enc, rtp_sink, NULL);
     gst_element_link_many(audio_src, src_volume, audio_enc, audio_pay, rtp_enc, rtp_sink, NULL);
@@ -270,12 +263,13 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
         }
 
         // Show dialog
-        GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(app->window),
+        app->dialog = gtk_message_dialog_new(GTK_WINDOW(app->window),
             GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT, GTK_MESSAGE_QUESTION, GTK_BUTTONS_YES_NO,
             "Incoming call from %s\nAnswer?", gtk_entry_get_text(GTK_ENTRY(app->entry)));
 
-        gint response = gtk_dialog_run(GTK_DIALOG(dialog));
-        gtk_widget_destroy(dialog);
+        gint response = gtk_dialog_run(GTK_DIALOG(app->dialog));
+        gtk_widget_destroy(app->dialog);
+        app->dialog = NULL;
         if(playbin)
         {
             g_source_remove(playbin_watch);
