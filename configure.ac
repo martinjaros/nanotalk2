@@ -23,7 +23,7 @@ PKG_CHECK_MODULES(GLIB, [glib-2.0 >= $GLIB_REQUIRED gio-2.0 >= $GLIB_REQUIRED],
 [AC_SUBST(GLIB_CFLAGS) AC_SUBST(GLIB_LIBS)], [AC_MSG_ERROR([
     You need to install or upgrade the GLib development package.
     On debian-based systems this is:
-        libglib-2.0-dev >= $GTK_REQUIRED
+        libglib2.0-dev >= $GTK_REQUIRED
 ])])
 
 AS_IF([test "x$enable_gui" != "xno"], [
