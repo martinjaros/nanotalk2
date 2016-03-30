@@ -1,1 +1,0 @@
-../src/glib-compat.h

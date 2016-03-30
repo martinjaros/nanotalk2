@@ -67,19 +67,27 @@ int main(int argc, char **argv)
     GError *error = NULL;
     GBytes *key = NULL;
     gchar *key_path = NULL;
+    g_autofree gchar *bootstrap_host = NULL;
+    gint bootstrap_port = DEFAULT_PORT;
     gint local_port = DEFAULT_PORT;
     gboolean ipv6 = FALSE;
+    gboolean silent = FALSE;
+
     GOptionEntry options[] =
     {
         { "key", 'k', 0, G_OPTION_ARG_FILENAME, &key_path, "Private key", "FILE" },
         { "local-port", 'l', 0, G_OPTION_ARG_INT, &local_port, "Source port (default " G_STRINGIFY(DEFAULT_PORT) ")", "NUM" },
         { "ipv6", '6', 0, G_OPTION_ARG_NONE, &ipv6, "Enable IPv6", NULL },
+        { "bootstrap-host", 'h', 0, G_OPTION_ARG_STRING, &bootstrap_host, "Bootstrap address", "ADDR" },
+        { "bootstrap-port", 'p', 0, G_OPTION_ARG_INT, &bootstrap_port, "Bootstrap port", "NUM" },
+        { "silent", 's', 0, G_OPTION_ARG_NONE, &silent, "Disable status reports", NULL },
         { NULL }
     };
 
     // Parse command line
     GOptionContext *context = g_option_context_new(NULL);
     g_option_context_set_summary(context, PACKAGE_STRING);
+    g_option_context_set_description(context, PACKAGE_BUGREPORT "\n" PACKAGE_URL);
     g_option_context_add_main_entries(context, options, NULL);
     if(!g_option_context_parse(context, &argc, &argv, &error))
     {
@@ -111,8 +119,18 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    print_report(client);
-    g_timeout_add(REPORT_PERIOD, (GSourceFunc)print_report, client);
+    if(bootstrap_host && bootstrap_port && !dht_client_bootstrap(client, bootstrap_host, bootstrap_port, &error))
+    {
+        g_printerr("Failed to bootstrap %s. %s\n", bootstrap_host, error->message);
+        g_clear_error(&error);
+    }
+
+    if(!silent)
+    {
+        print_report(client);
+        g_timeout_add(REPORT_PERIOD, (GSourceFunc)print_report, client);
+    }
+
     g_main_loop_run(g_main_loop_new(NULL, FALSE));
     return 0;
 }

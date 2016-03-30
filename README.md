@@ -25,10 +25,12 @@ Dependencies:
  * GStreamer Good Plugins (for RTP)
  * GStreamer Bad Plugins (for Opus in pre-1.8 versions)
 
+If you want to build a server without GTK+ and GStreamer use `./confifure --disable-gui`.
+
 ## Running
 First, you need a private key, which is a 32-byte random sequence
 
-    dd if=/dev/random of=/path/to/private.key bs=32 count=1
+    dd if=/dev/random of=/path/to/private.key bs=32 count=1 iflag=fullblock
 
 An unique ID is assigned to each key. To find out what ID does your key have, run the client with a debugging option and check the console output
 
@@ -42,6 +44,9 @@ You may create a text file with list of aliases for IDs you know. For example
 In order to use the client it must be bootstrapped to a live node specified either by hostname or address
 
     nanotalk -k /path/to/private.key -a /path/to/aliases.txt -h 10.20.30.40 -p 5004
+
+To make the client work behind NAT you need to either enable "full-cone" if the router supports it
+or setup port forwarding for UDP port 5004.
 
 The client can play a sound file to indicate an incoming call; use the `--call-sound` option.  
 For more options see `nanotalk --help`
