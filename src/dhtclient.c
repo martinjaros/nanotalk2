@@ -768,20 +768,6 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
 
                 // Ignore own ID
                 if(memcmp(msg->srcid, priv->id, DHT_HASH_SIZE) == 0) break;
-                if((priv->root_bucket.count == 0) && !priv->root_bucket.next)
-                {
-                    // Bootstrap to sender
-                    MsgLookup request;
-                    request.type = MSG_LOOKUP_REQ;
-                    memcpy(request.srcid, priv->id, DHT_HASH_SIZE);
-                    memcpy(request.dstid, priv->id, DHT_HASH_SIZE);
-                    gssize res = g_socket_send_to(priv->socket, sockaddr, (gchar*)&request, sizeof(request), NULL, NULL);
-                    if(res >= 0)
-                    {
-                        priv->packets_sent++;
-                        priv->bytes_sent += res;
-                    }
-                }
 
                 g_debug("received lookup request");
                 dht_client_update(client, msg->srcid, TRUE, addr, port);
