@@ -138,6 +138,7 @@ struct _dht_lookup
     GSequence *queries; // elements of type DhtQuery, sorted by metric
     gsize num_sources; // number of pending timeouts in the sequence
     gsize num_connections; // requested number of connections (0 for internal lookups)
+    guint bootstrap_source; // timeout for bootstrap (0 if not bootstrap)
 };
 
 struct _dht_connection
@@ -195,6 +196,7 @@ static void dht_query_destroy(gpointer arg);
 
 static gboolean dht_lookup_update(DhtLookup *lookup, gconstpointer node_ptr, gsize count, gboolean emit_error, GError **error);
 static gboolean dht_lookup_dispatch(DhtLookup *lookup, gboolean emit_error, GError **error);
+static gboolean dht_lookup_timeout(gpointer arg);
 static void dht_lookup_destroy(gpointer arg);
 
 static gboolean dht_connection_receive(GSocket *socket, GIOCondition condition, gpointer arg);
@@ -450,6 +452,7 @@ gboolean dht_client_bootstrap(DhtClient *client, const gchar *host, guint16 port
             memcpy(lookup->id, priv->id, DHT_HASH_SIZE);
             lookup->parent = client;
             lookup->queries = g_sequence_new(dht_query_destroy);
+            lookup->bootstrap_source = g_timeout_add(DHT_TIMEOUT_MS, dht_lookup_timeout, lookup);
             g_hash_table_insert(priv->lookup_table, lookup->id, lookup);
             g_debug("bootstrapping");
         }
@@ -1222,10 +1225,32 @@ static gboolean dht_lookup_dispatch(DhtLookup *lookup, gboolean emit_error, GErr
     return TRUE;
 }
 
+// Called for bootstrap lookup after DHT_TIMEOUT_MS
+static gboolean dht_lookup_timeout(gpointer arg)
+{
+    DhtLookup *lookup = arg;
+    DhtClient *client = lookup->parent;
+    DhtClientPrivate *priv = dht_client_get_instance_private(client);
+
+    lookup->bootstrap_source = 0;
+    if(lookup->num_sources == 0)
+    {
+        g_hash_table_remove(priv->lookup_table, lookup);
+
+        // Signal bootstrap error
+        g_autofree gchar *id_base64 = g_base64_encode(priv->id, DHT_HASH_SIZE);
+        g_autoptr(GError) error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_TIMED_OUT, "Bootstrap timed out");
+        g_signal_emit(client, dht_client_signals[SIGNAL_ON_ERROR], 0, id_base64, error);
+    }
+
+    return G_SOURCE_REMOVE;
+}
+
 // Called by GHashTable destroy notifier
 static void dht_lookup_destroy(gpointer arg)
 {
     DhtLookup *lookup = arg;
+    if(lookup->bootstrap_source) g_source_remove(lookup->bootstrap_source);
     g_sequence_free(lookup->queries);
     g_free(lookup);
 }

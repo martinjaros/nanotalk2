@@ -97,11 +97,12 @@ DhtClient* dht_client_new(GSocketFamily family, guint16 port, GBytes *key, GErro
  * @client: Object instance
  * @host: Hostname or address
  * @port: Destination port
- * @error: (allow-none): Output location for errors
+ * @error: (allow-none): Output location for synchronous errors
  *
  * Bootstraps the client by sending a request to the specified address, this is necessary in order to join the distributed network.
  * This method may be called repeatedly, the #DhtClient:peers property will hold the number of peers found.
  * After this initial process the client will automatically take over with its own internal periodic refreshing.
+ * Asynchronous errors will be reported via #DhtClient::on-error signal with the client's own ID.
  *
  * Returns: %TRUE on success
  */
@@ -120,7 +121,7 @@ gboolean dht_client_bootstrap(DhtClient *client, const gchar *host, guint16 port
  *
  *   #GIOError.HOST_NOT_FOUND - Lookup for a host with the specified ID failed
  *
- *   #GIOError.HOST_UNREACHABLE - The connection was rejected by a network element
+ *   #GIOError.HOST_UNREACHABLE - The host address cannot be reached
  *
  *   #GIOError.CONNECTION_REFUSED - The connection was rejected
  *
