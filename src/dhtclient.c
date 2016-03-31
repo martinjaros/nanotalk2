@@ -442,6 +442,18 @@ gboolean dht_client_bootstrap(DhtClient *client, const gchar *host, guint16 port
 
     if(sockaddr)
     {
+        DhtLookup *lookup = g_hash_table_lookup(priv->lookup_table, priv->id);
+        if(!lookup)
+        {
+            // Create lookup
+            lookup = g_new0(DhtLookup, 1);
+            memcpy(lookup->id, priv->id, DHT_HASH_SIZE);
+            lookup->parent = client;
+            lookup->queries = g_sequence_new(dht_query_destroy);
+            g_hash_table_insert(priv->lookup_table, lookup->id, lookup);
+            g_debug("bootstrapping");
+        }
+
         // Send request
         MsgLookup msg;
         msg.type = MSG_LOOKUP_REQ;
@@ -653,13 +665,6 @@ static void dht_client_constructed(GObject *obj)
     // Derive ID
     crypto_scalarmult_base(priv->pk, priv->sk);
     crypto_generichash(priv->id, DHT_HASH_SIZE, priv->pk, crypto_scalarmult_BYTES, NULL, 0);
-
-    // Create bootstrapping lookup
-    DhtLookup *lookup = g_new0(DhtLookup, 1);
-    memcpy(lookup->id, priv->id, DHT_HASH_SIZE);
-    lookup->parent = client;
-    lookup->queries = g_sequence_new(dht_query_destroy);
-    g_hash_table_insert(priv->lookup_table, lookup->id, lookup);
 
     // Attach sources
     g_autoptr(GSource) source = g_socket_create_source(priv->socket, G_IO_IN, NULL);
