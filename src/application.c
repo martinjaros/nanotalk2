@@ -151,6 +151,54 @@ static gboolean bus_watch(GstBus *bus, GstMessage *message, Application *app)
     return TRUE;
 }
 
+static gboolean dialog_run(Application *app)
+{
+    GstElement *playbin = NULL;
+    guint playbin_watch;
+
+    if(app->sound_file)
+    {
+        // Play sound file
+        playbin = gst_element_factory_make("playbin", "playbin_loop");
+        GstBus *bus = gst_pipeline_get_bus(GST_PIPELINE(playbin));
+        playbin_watch = gst_bus_add_watch(bus, (GstBusFunc)bus_watch, app);
+        gst_object_unref(bus);
+
+        g_autofree gchar *uri = gst_filename_to_uri(app->sound_file, NULL);
+        g_object_set(playbin, "uri", uri, NULL);
+        gst_element_set_state(playbin, GST_STATE_PLAYING);
+    }
+
+    // Show dialog
+    app->dialog = gtk_message_dialog_new(GTK_WINDOW(app->window),
+        GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT, GTK_MESSAGE_QUESTION, GTK_BUTTONS_YES_NO,
+        "Incoming call from %s\nAnswer?", gtk_entry_get_text(GTK_ENTRY(app->entry)));
+
+    gint response = gtk_dialog_run(GTK_DIALOG(app->dialog));
+    gtk_widget_destroy(app->dialog);
+    app->dialog = NULL;
+
+    if(playbin)
+    {
+        // Stop call sound
+        g_source_remove(playbin_watch);
+        gst_element_set_state(playbin, GST_STATE_NULL);
+        gst_object_unref(playbin);
+    }
+
+    if(response == GTK_RESPONSE_YES)
+    {
+        GstElement *sink_volume = gst_bin_get_by_name(GST_BIN(app->rx_pipeline), "sink_volume");
+        g_object_set(sink_volume, "mute", FALSE, NULL);
+
+        GstElement *src_volume = gst_bin_get_by_name(GST_BIN(app->tx_pipeline), "src_volume");
+        g_object_set(src_volume, "mute", FALSE, NULL);
+    }
+    else call_stop(app->button_stop, app);
+
+    return G_SOURCE_REMOVE;
+}
+
 static gboolean accept_connection(DhtClient *client, const gchar *id, Application *app)
 {
     if(gtk_widget_is_sensitive(app->button_start))
@@ -245,52 +293,8 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     gst_debug_bin_to_dot_file_with_ts(GST_BIN(app->tx_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "start-tx-pipeline");
     gst_element_set_state(app->tx_pipeline, GST_STATE_PLAYING);
 
-    if(remote)
-    {
-        GstElement *playbin = NULL;
-        guint playbin_watch;
-        if(app->sound_file)
-        {
-            // Play sound file
-            playbin = gst_element_factory_make("playbin", "playbin_loop");
-            GstBus *bus = gst_pipeline_get_bus(GST_PIPELINE(playbin));
-            playbin_watch = gst_bus_add_watch(bus, (GstBusFunc)bus_watch, app);
-            gst_object_unref(bus);
-
-            g_autofree gchar *uri = gst_filename_to_uri(app->sound_file, NULL);
-            g_object_set(playbin, "uri", uri, NULL);
-            gst_element_set_state(playbin, GST_STATE_PLAYING);
-        }
-
-        // Show dialog
-        app->dialog = gtk_message_dialog_new(GTK_WINDOW(app->window),
-            GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT, GTK_MESSAGE_QUESTION, GTK_BUTTONS_YES_NO,
-            "Incoming call from %s\nAnswer?", gtk_entry_get_text(GTK_ENTRY(app->entry)));
-
-        gint response = gtk_dialog_run(GTK_DIALOG(app->dialog));
-        gtk_widget_destroy(app->dialog);
-        app->dialog = NULL;
-        if(playbin)
-        {
-            g_source_remove(playbin_watch);
-            gst_element_set_state(playbin, GST_STATE_NULL);
-            gst_object_unref(playbin);
-        }
-
-        if(response == GTK_RESPONSE_YES)
-        {
-            g_object_set(src_volume, "mute", FALSE, NULL);
-            g_object_set(sink_volume, "mute", FALSE, NULL);
-        }
-        else
-        {
-            // Terminate
-            call_stop(app->button_stop, app);
-            return;
-        }
-    }
-
-    // Show main window
+    // Show windows
+    if(remote) g_idle_add((GSourceFunc)dialog_run, app);
     gtk_widget_set_sensitive(app->button_stop, TRUE);
     if(!gtk_widget_get_visible(app->window))
         gtk_widget_show(app->window);

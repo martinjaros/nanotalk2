@@ -37,24 +37,25 @@ nanotalk_proto.dissector = function(buffer, info, tree)
                 end
             end
         elseif msgtype == 0xC2 then
-            if buffer:len() == 65 then
+            if buffer:len() == 53 then
                 info.cols.protocol = "NANOTALK"
-                info.cols.info = "Session request"
+                info.cols.info = "Connection request"
 
                 local subtree = tree:add(nanotalk_proto, buffer())
-                subtree:add(buffer(0, 1), "Type: Session request (0xC2)")
-                subtree:add(buffer(1, 32), "Public key: " .. tostring(buffer(1, 32)))
-                subtree:add(buffer(33, 32), "Nonce: " .. tostring(buffer(33, 32)))
+                subtree:add(buffer(0, 1), "Type: Connection request (0xC2)")
+                subtree:add(buffer(1, 20), "Source ID: " .. tostring(buffer(1, 20)))
+                subtree:add(buffer(21, 32), "Nonce: " .. tostring(buffer(21, 32)))
             end
         elseif msgtype == 0xC3 then
-            if buffer:len() == 65 then
+            if buffer:len() == 97 then
                 info.cols.protocol = "NANOTALK"
-                info.cols.info = "Session response"
+                info.cols.info = "Connection response"
 
                 local subtree = tree:add(nanotalk_proto, buffer())
-                subtree:add(buffer(0, 1), "Type: Session response (0xC3)")
+                subtree:add(buffer(0, 1), "Type: Connection response (0xC3)")
                 subtree:add(buffer(1, 32), "Public key: " .. tostring(buffer(1, 32)))
-                subtree:add(buffer(33, 32), "Nonce: " .. tostring(buffer(33, 32)))
+                subtree:add(buffer(33, 32), "Source nonce: " .. tostring(buffer(33, 32)))
+                subtree:add(buffer(65, 32), "Peer nonce: " .. tostring(buffer(65, 32)))
             end
         else
             rtp_dissector:call(buffer, info, tree)

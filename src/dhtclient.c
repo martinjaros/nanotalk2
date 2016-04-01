@@ -67,7 +67,8 @@ enum
 
 typedef struct _msg_node MsgNode;
 typedef struct _msg_lookup MsgLookup;
-typedef struct _msg_connection MsgConnection;
+typedef struct _msg_connection_request MsgConnectionRequest;
+typedef struct _msg_connection_response MsgConnectionResponse;
 
 typedef struct _dht_node DhtNode;
 typedef struct _dht_bucket DhtBucket;
@@ -93,11 +94,20 @@ struct _msg_lookup
 }
 __attribute__((packed));
 
-struct _msg_connection
+struct _msg_connection_request
 {
     guint8 type; // MSG_CONNECTION_REQ
+    guint8 srcid[DHT_HASH_SIZE];
+    guint8 nonce[DHT_NONCE_SIZE];
+}
+__attribute__((packed));
+
+struct _msg_connection_response
+{
+    guint8 type; // MSG_CONNECTION_RES
     guint8 pk[crypto_scalarmult_BYTES];
     guint8 nonce[DHT_NONCE_SIZE];
+    guint8 peer_nonce[DHT_NONCE_SIZE];
 }
 __attribute__((packed));
 
@@ -132,7 +142,7 @@ struct _dht_query // use slice allocator
 
 struct _dht_lookup
 {
-    guint8 id[DHT_HASH_SIZE];
+    guint8 id[DHT_HASH_SIZE]; // hash table key
     DhtClient *parent;
 
     GSequence *queries; // elements of type DhtQuery, sorted by metric
@@ -144,12 +154,12 @@ struct _dht_lookup
 struct _dht_connection
 {
     guint8 id[DHT_HASH_SIZE];
-    guint8 nonce[DHT_NONCE_SIZE];
+    guint8 nonce[DHT_NONCE_SIZE]; // hash table key
     DhtClient *parent;
-    GList *link; // list link within parent->connections
 
     GSocket *socket;
-    guint io_source, timeout_source; // GSource ID within default context
+    GSocketAddress *sockaddr;
+    guint timeout_source; // GSource ID within default context
 };
 
 struct _dht_client_private
@@ -162,7 +172,7 @@ struct _dht_client_private
     gsize key_size; // derived key size
 
     GHashTable *lookup_table; // elements type of DhtLookup
-    GList *connections; // elements type of DhtConnection
+    GHashTable *connection_table; // elements type of DhtConnection
 
     GSocket *socket;
     GSocketFamily family; // G_SOCKET_FAMILY_IPV4 or G_SOCKET_FAMILY_IPV6
@@ -199,7 +209,6 @@ static gboolean dht_lookup_dispatch(DhtLookup *lookup, gboolean emit_error, GErr
 static gboolean dht_lookup_timeout(gpointer arg);
 static void dht_lookup_destroy(gpointer arg);
 
-static gboolean dht_connection_receive(GSocket *socket, GIOCondition condition, gpointer arg);
 static gboolean dht_connection_timeout(gpointer arg);
 static void dht_connection_destroy(gpointer arg);
 
@@ -210,7 +219,7 @@ static inline void dht_memxor(guint8 *metric, const guint8 *id1, const guint8 *i
         metric[i] = id1[i] ^ id2[i];
 }
 
-static guint dht_hash_func(gconstpointer key)
+static guint dht_hash_id_func(gconstpointer key)
 {
     return (((guint8*)key)[DHT_HASH_SIZE - 4] << 24) |
            (((guint8*)key)[DHT_HASH_SIZE - 3] << 16) |
@@ -218,12 +227,25 @@ static guint dht_hash_func(gconstpointer key)
            (((guint8*)key)[DHT_HASH_SIZE - 1]);
 }
 
-static gboolean dht_equal_func(gconstpointer a, gconstpointer b)
+static guint dht_hash_nonce_func(gconstpointer key)
+{
+    return (((guint8*)key)[3] << 24) |
+           (((guint8*)key)[2] << 16) |
+           (((guint8*)key)[1] <<  8) |
+           (((guint8*)key)[0]);
+}
+
+static gboolean dht_equal_id_func(gconstpointer a, gconstpointer b)
 {
     return memcmp(a, b, DHT_HASH_SIZE) == 0;
 }
 
-static gint dht_compare_func(gconstpointer a, gconstpointer b, gpointer arg)
+static gboolean dht_equal_nonce_func(gconstpointer a, gconstpointer b)
+{
+    return memcmp(a, b, DHT_NONCE_SIZE) == 0;
+}
+
+static gint dht_compare_metric_func(gconstpointer a, gconstpointer b, gpointer arg)
 {
     return memcmp(a, b, DHT_HASH_SIZE);
 }
@@ -276,7 +298,8 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * Size of the derived keys passed to #DhtClient::new-connection signal.
      */
     g_object_class_install_property(object_class, PROP_KEY_SIZE,
-            g_param_spec_uint("key-size", "Key size", "Size of the derived keys", 16, 64, DHT_KEY_SIZE,
+            g_param_spec_uint("key-size", "Key size", "Size of the derived keys",
+                    crypto_generichash_BYTES_MIN, crypto_generichash_BYTES_MAX, crypto_generichash_BYTES,
                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -395,7 +418,8 @@ static void dht_client_class_init(DhtClientClass *client_class)
 static void dht_client_init(DhtClient *client)
 {
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
-    priv->lookup_table = g_hash_table_new_full(dht_hash_func, dht_equal_func, NULL, dht_lookup_destroy);
+    priv->lookup_table = g_hash_table_new_full(dht_hash_id_func, dht_equal_id_func, NULL, dht_lookup_destroy);
+    priv->connection_table = g_hash_table_new_full(dht_hash_nonce_func, dht_equal_nonce_func, NULL, dht_connection_destroy);
     priv->key_size = DHT_KEY_SIZE;
 }
 
@@ -686,7 +710,7 @@ static void dht_client_finalize(GObject *obj)
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
 
     g_hash_table_destroy(priv->lookup_table);
-    g_list_free_full(priv->connections, dht_connection_destroy);
+    g_hash_table_destroy(priv->connection_table);
     g_object_unref(priv->socket);
     g_source_remove(priv->io_source);
     g_source_remove(priv->timeout_source);
@@ -813,7 +837,7 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
                     guint8 metric[DHT_HASH_SIZE];
                     dht_memxor(metric, msg->srcid, lookup->id);
 
-                    GSequenceIter *iter = g_sequence_lookup(lookup->queries, metric, dht_compare_func, NULL);
+                    GSequenceIter *iter = g_sequence_lookup(lookup->queries, metric, dht_compare_metric_func, NULL);
                     if(iter)
                     {
                         // Finalize existing query
@@ -837,7 +861,7 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
                         query->is_finished = TRUE;
                         query->is_alive = TRUE;
                         query->parent = lookup;
-                        g_sequence_insert_sorted(lookup->queries, query, dht_compare_func, NULL);
+                        g_sequence_insert_sorted(lookup->queries, query, dht_compare_metric_func, NULL);
                     }
 
                     g_autoptr(GError) error = NULL;
@@ -849,50 +873,84 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
 
             case MSG_CONNECTION_REQ:
             {
-                if(len != sizeof(MsgConnection)) break;
-                MsgConnection *msg = (MsgConnection*)buffer;
+                if(len != sizeof(MsgConnectionRequest)) break;
+                MsgConnectionRequest *msg = (MsgConnectionRequest*)buffer;
 
-                guint8 secret[crypto_scalarmult_BYTES];
-                if(crypto_scalarmult(secret, priv->sk, msg->pk) != 0) break;
+                // Ignore own ID
+                if(memcmp(msg->srcid, priv->id, DHT_HASH_SIZE) == 0) break;
 
-                guint8 id[DHT_HASH_SIZE];
-                crypto_generichash(id, DHT_HASH_SIZE, msg->pk, crypto_scalarmult_BYTES, NULL, 0);
-                g_autofree gchar *id_base64 = g_base64_encode(id, DHT_HASH_SIZE);
-                g_debug("received connection request %s", id_base64);
+                g_debug("received connection request");
+                dht_client_update(client, msg->srcid, TRUE, addr, port);
 
                 gboolean accept = FALSE;
+                g_autofree gchar *id_base64 = g_base64_encode(msg->srcid, DHT_HASH_SIZE);
                 g_signal_emit(client, dht_client_signals[SIGNAL_ACCEPT_CONNECTION], 0, id_base64, &accept);
                 if(accept)
                 {
-                    MsgConnection response;
+                    DhtConnection *connection = g_new0(DhtConnection, 1);
+                    randombytes_buf(connection->nonce, DHT_NONCE_SIZE);
+                    memcpy(connection->id, msg->srcid, DHT_HASH_SIZE);
+                    connection->parent = client;
+
+                    MsgConnectionResponse response;
                     response.type = MSG_CONNECTION_RES;
                     memcpy(response.pk, priv->pk, crypto_scalarmult_BYTES);
-                    randombytes_buf(response.nonce, DHT_NONCE_SIZE);
+                    memcpy(response.nonce, connection->nonce, DHT_NONCE_SIZE);
+                    memcpy(response.peer_nonce, msg->nonce, DHT_NONCE_SIZE);
 
                     // Send response
-                    g_autoptr(GSocket) connection_socket = g_socket_new(priv->family, G_SOCKET_TYPE_DATAGRAM, G_SOCKET_PROTOCOL_UDP, NULL);
-                    g_socket_send_to(connection_socket, sockaddr, (gchar*)&response, sizeof(response), NULL, NULL);
-                    g_debug("connection accepted");
+                    connection->socket = g_socket_new(priv->family, G_SOCKET_TYPE_DATAGRAM, G_SOCKET_PROTOCOL_UDP, NULL);
+                    g_socket_send_to(connection->socket, sockaddr, (gchar*)&response, sizeof(response), NULL, NULL);
 
-                    // Derive keys
-                    guint8 enc_key[priv->key_size];
-                    guint8 dec_key[priv->key_size];
-                    dht_kdf(secret, msg->nonce, response.nonce, enc_key, dec_key, priv->key_size);
-
-                    // Signal new connection
-                    g_autoptr(GBytes) enc_key_bytes = g_bytes_new(enc_key, sizeof(enc_key));
-                    g_autoptr(GBytes) dec_key_bytes = g_bytes_new(dec_key, sizeof(dec_key));
-                    g_signal_emit(client, dht_client_signals[SIGNAL_NEW_CONNECTION], 0,
-                            id_base64, connection_socket, sockaddr, enc_key_bytes, dec_key_bytes, TRUE);
-                }
-                else
-                {
-                    g_debug("connection rejected");
-                    if(g_socket_send_to(socket, sockaddr, NULL, 0, NULL, NULL) == 0)
-                        priv->packets_sent++;
+                    connection->timeout_source = g_timeout_add(DHT_TIMEOUT_MS, dht_connection_timeout, connection);
+                    g_hash_table_insert(priv->connection_table, connection->nonce, connection);
                 }
 
                 break;
+            }
+
+            case MSG_CONNECTION_RES:
+            {
+                if(len != sizeof(MsgConnectionResponse)) break;
+                MsgConnectionResponse *msg = (MsgConnectionResponse*)buffer;
+
+                DhtConnection *connection = g_hash_table_lookup(priv->connection_table, msg->peer_nonce);
+                if(!connection) break;
+
+                guint8 id[DHT_HASH_SIZE];
+                crypto_generichash(id, DHT_HASH_SIZE, msg->pk, crypto_scalarmult_BYTES, NULL, 0);
+                if(memcmp(id, connection->id, DHT_HASH_SIZE) != 0) break;
+
+                guint8 secret[crypto_scalarmult_BYTES];
+                if(crypto_scalarmult(secret, priv->sk, msg->pk) != 0) break;
+                g_debug("received connection response");
+
+                gboolean is_remote = connection->socket ? TRUE : FALSE;
+                if(!is_remote)
+                {
+                    MsgConnectionResponse response;
+                    response.type = MSG_CONNECTION_RES;
+                    memcpy(response.pk, priv->pk, crypto_scalarmult_BYTES);
+                    memcpy(response.nonce, connection->nonce, DHT_NONCE_SIZE);
+                    memcpy(response.peer_nonce, msg->nonce, DHT_NONCE_SIZE);
+
+                    // Send response
+                    connection->socket = g_socket_new(priv->family, G_SOCKET_TYPE_DATAGRAM, G_SOCKET_PROTOCOL_UDP, NULL);
+                    g_socket_send_to(connection->socket, connection->sockaddr, (gchar*)&response, sizeof(response), NULL, NULL);
+                }
+
+                // Derive keys
+                guint8 enc_key[priv->key_size];
+                guint8 dec_key[priv->key_size];
+                dht_kdf(secret, msg->nonce, connection->nonce, enc_key, dec_key, priv->key_size);
+
+                g_autoptr(GBytes) enc_key_bytes = g_bytes_new(enc_key, sizeof(enc_key));
+                g_autoptr(GBytes) dec_key_bytes = g_bytes_new(dec_key, sizeof(dec_key));
+                g_autofree gchar *id_base64 = g_base64_encode(connection->id, DHT_HASH_SIZE);
+                g_signal_emit(client, dht_client_signals[SIGNAL_NEW_CONNECTION], 0,
+                        id_base64, connection->socket, sockaddr, enc_key_bytes, dec_key_bytes, is_remote);
+
+                g_hash_table_remove(priv->connection_table, connection->nonce);
             }
         }
     }
@@ -1113,26 +1171,23 @@ static gboolean dht_lookup_update(DhtLookup *lookup, gconstpointer node_ptr, gsi
                 connection->parent = client;
 
                 // Send request
-                MsgConnection request;
+                MsgConnectionRequest request;
                 request.type = MSG_CONNECTION_REQ;
-                memcpy(request.pk, priv->pk, crypto_scalarmult_BYTES);
+                memcpy(request.srcid, priv->id, DHT_HASH_SIZE);
                 memcpy(request.nonce, connection->nonce, DHT_NONCE_SIZE);
                 g_debug("sending connection request");
 
                 g_autoptr(GInetAddress) in_addr = g_inet_address_new_from_bytes(node->addr, priv->family);
-                g_autoptr(GSocketAddress) sockaddr = g_inet_socket_address_new(in_addr, GUINT16_FROM_BE(node->port));
-                connection->socket = g_socket_new(priv->family, G_SOCKET_TYPE_DATAGRAM, G_SOCKET_PROTOCOL_UDP, NULL);
-                g_socket_send_to(connection->socket, sockaddr, (gchar*)&request, sizeof(request), NULL, NULL);
+                connection->sockaddr = g_inet_socket_address_new(in_addr, GUINT16_FROM_BE(node->port));
+                gssize res = g_socket_send_to(priv->socket, connection->sockaddr, (gchar*)&request, sizeof(request), NULL, NULL);
+                if(res >= 0)
+                {
+                    priv->packets_sent++;
+                    priv->bytes_sent += res;
+                }
 
-                // Attach socket source
-                g_autoptr(GSource) source = g_socket_create_source(connection->socket, G_IO_IN, NULL);
-                g_source_set_callback(source, (GSourceFunc)dht_connection_receive, connection, NULL);
-                connection->io_source =  g_source_attach(source, g_main_context_default());
-
-                // Attach timer, link with parent
                 connection->timeout_source = g_timeout_add(DHT_TIMEOUT_MS, dht_connection_timeout, connection);
-                connection->link = g_list_prepend(priv->connections, connection);
-                priv->connections = connection->link;
+                g_hash_table_insert(priv->connection_table, connection->nonce, connection);
             }
 
             // Destroy lookup
@@ -1144,7 +1199,7 @@ static gboolean dht_lookup_update(DhtLookup *lookup, gconstpointer node_ptr, gsi
         dht_memxor(metric, lookup->id, node->id);
 
         // Skip duplicates
-        GSequenceIter *iter = g_sequence_search(lookup->queries, metric, dht_compare_func, NULL);
+        GSequenceIter *iter = g_sequence_search(lookup->queries, metric, dht_compare_metric_func, NULL);
         if(!g_sequence_iter_is_begin(iter) && !memcmp(g_sequence_get(g_sequence_iter_prev(iter)), metric, DHT_HASH_SIZE))
             continue;
 
@@ -1235,7 +1290,7 @@ static gboolean dht_lookup_timeout(gpointer arg)
     lookup->bootstrap_source = 0;
     if(lookup->num_sources == 0)
     {
-        g_hash_table_remove(priv->lookup_table, lookup);
+        g_hash_table_remove(priv->lookup_table, lookup->id);
 
         // Signal bootstrap error
         g_autofree gchar *id_base64 = g_base64_encode(priv->id, DHT_HASH_SIZE);
@@ -1255,64 +1310,6 @@ static void dht_lookup_destroy(gpointer arg)
     g_free(lookup);
 }
 
-// Socket source handler for DhtConnection
-static gboolean dht_connection_receive(GSocket *socket, GIOCondition condition, gpointer arg)
-{
-    DhtConnection *connection = arg;
-    DhtClient *client = connection->parent;
-    DhtClientPrivate *priv = dht_client_get_instance_private(client);
-
-    g_autofree gchar *id_base64 = g_base64_encode(connection->id, DHT_HASH_SIZE);
-    g_autoptr(GSocketAddress) sockaddr = NULL;
-    g_autoptr(GError) error = NULL;
-
-    gchar buffer[MSG_BUFFER_SIZE];
-    gssize len = g_socket_receive_from(socket, &sockaddr, buffer, sizeof(buffer), NULL, &error);
-    if(error)
-    {
-        // Signal error
-        g_signal_emit(client, dht_client_signals[SIGNAL_ON_ERROR], 0, id_base64, error);
-        goto finalize;
-    }
-
-    // Check message type
-    MsgConnection *msg = (MsgConnection*)buffer;
-    if((len == sizeof(MsgConnection)) && (msg->type == MSG_CONNECTION_RES))
-    {
-        // Verify ID
-        guint8 id[DHT_HASH_SIZE];
-        crypto_generichash(id, DHT_HASH_SIZE, msg->pk, crypto_scalarmult_BYTES, NULL, 0);
-        if(memcmp(id, connection->id, DHT_HASH_SIZE) == 0)
-        {
-            guint8 secret[crypto_scalarmult_BYTES];
-            if(crypto_scalarmult(secret, priv->sk, msg->pk) == 0)
-            {
-                // Derive keys
-                guint8 enc_key[priv->key_size];
-                guint8 dec_key[priv->key_size];
-                dht_kdf(secret, msg->nonce, connection->nonce, enc_key, dec_key, priv->key_size);
-
-                g_debug("received connection response %s", id_base64);
-                g_autoptr(GBytes) enc_key_bytes = g_bytes_new(enc_key, sizeof(enc_key));
-                g_autoptr(GBytes) dec_key_bytes = g_bytes_new(dec_key, sizeof(dec_key));
-                g_signal_emit(client, dht_client_signals[SIGNAL_NEW_CONNECTION], 0,
-                        id_base64, socket, sockaddr, enc_key_bytes, dec_key_bytes, FALSE);
-
-                goto finalize;
-            }
-        }
-    }
-
-    // Invalid response, signal error
-    error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CONNECTION_REFUSED, "Connection refused");
-    g_signal_emit(client, dht_client_signals[SIGNAL_ON_ERROR], 0, id_base64, error);
-
-finalize:
-    priv->connections = g_list_delete_link(priv->connections, connection->link);
-    dht_connection_destroy(connection);
-    return G_SOURCE_REMOVE;
-}
-
 static gboolean dht_connection_timeout(gpointer arg)
 {
     DhtConnection *connection = arg;
@@ -1324,9 +1321,7 @@ static gboolean dht_connection_timeout(gpointer arg)
     g_autoptr(GError) error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_TIMED_OUT, "Connection timed out");
     g_signal_emit(client, dht_client_signals[SIGNAL_ON_ERROR], 0, id_base64, error);
 
-    // Destroy connection
-    priv->connections = g_list_delete_link(priv->connections, connection->link);
-    dht_connection_destroy(connection);
+    g_hash_table_remove(priv->connection_table, connection->nonce);
     return G_SOURCE_REMOVE;
 }
 
@@ -1335,8 +1330,8 @@ static void dht_connection_destroy(gpointer arg)
 {
     DhtConnection *connection = arg;
 
-    g_source_remove(connection->io_source);
+    if(connection->socket) g_object_unref(connection->socket);
+    if(connection->sockaddr) g_object_unref(connection->sockaddr);
     g_source_remove(connection->timeout_source);
-    g_object_unref(connection->socket);
     g_free(connection);
 }
