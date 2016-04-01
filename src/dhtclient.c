@@ -437,7 +437,7 @@ DhtClient* dht_client_new(GSocketFamily family, guint16 port, GBytes *key, GErro
     // Bind socket
     g_autoptr(GInetAddress) in_addr = g_inet_address_new_any(family);
     g_autoptr(GSocketAddress) sockaddr = g_inet_socket_address_new(in_addr, port);
-    if(!g_socket_bind(socket, sockaddr, TRUE, error))
+    if(!g_socket_bind(socket, sockaddr, FALSE, error))
         return NULL;
 
     return g_object_new(DHT_TYPE_CLIENT, "key", key, "socket", socket, NULL);
