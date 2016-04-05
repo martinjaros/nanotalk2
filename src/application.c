@@ -21,14 +21,11 @@
 #include <string.h>
 #include <gtk/gtk.h>
 #include <gst/gst.h>
+#include "application.h"
 #include "gstrtpencrypt.h"
 #include "gstrtpdecrypt.h"
-#include "dhtclient.h"
 
-#define DEFAULT_PORT 5004
 #define RECV_TIMEOUT 3000000000L // 3 seconds
-
-typedef struct _application Application;
 
 struct _application
 {
@@ -325,44 +322,16 @@ static gboolean plugin_init(GstPlugin *plugin)
            gst_element_register(plugin, "rtpdecrypt", GST_RANK_NONE, GST_TYPE_RTP_DECRYPT);
 }
 
-static gboolean application_init(Application *app, int *argc, char ***argv, GError **error)
+gboolean application_init()
 {
-    g_autofree gchar *key_path = NULL;
-    g_autofree gchar *aliases_path = NULL;
-    g_autofree gchar *bootstrap_host = NULL;
-    gint bootstrap_port = DEFAULT_PORT;
-    gint local_port = DEFAULT_PORT;
-    gboolean ipv6 = FALSE;
+    static gboolean initialized = FALSE;
+    if(initialized) return TRUE;
 
-    GOptionEntry options[] =
-    {
-        { "key", 'k', 0, G_OPTION_ARG_FILENAME, &key_path, "Private key", "FILE" },
-        { "aliases", 'a', 0, G_OPTION_ARG_FILENAME, &aliases_path, "List of aliases", "FILE" },
-        { "local-port", 'l', 0, G_OPTION_ARG_INT, &local_port, "Source port (default " G_STRINGIFY(DEFAULT_PORT) ")", "NUM" },
-        { "ipv6", '6', 0, G_OPTION_ARG_NONE, &ipv6, "Enable IPv6", NULL },
-        { "bootstrap-host", 'h', 0, G_OPTION_ARG_STRING, &bootstrap_host, "Bootstrap address", "ADDR" },
-        { "bootstrap-port", 'p', 0, G_OPTION_ARG_INT, &bootstrap_port, "Bootstrap port", "NUM" },
-        { "call-sound", 's', 0, G_OPTION_ARG_STRING, &app->sound_file, "Incoming call sound", "FILE" },
-        { NULL }
-    };
-
-    // Parse command line
-    g_autoptr(GOptionContext) context = g_option_context_new(NULL);
-    g_option_context_set_summary(context, PACKAGE_STRING);
-    g_option_context_set_description(context, PACKAGE_BUGREPORT "\n" PACKAGE_URL);
-    g_option_context_add_main_entries(context, options, NULL);
-    g_option_context_add_group(context, gtk_get_option_group(TRUE));
-    g_option_context_add_group(context, gst_init_get_option_group());
-    if(!g_option_context_parse(context, argc, argv, error))
-        return FALSE;
-
-    // Check GStreamer plugins
     GstRegistry *registry = gst_registry_get();
     if(!gst_registry_check_feature_version(registry, "playbin", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO) ||
        !gst_registry_check_feature_version(registry, "volume", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO))
     {
         g_warning("Missing GStreamer Base Plugins");
-        if(error) *error = g_error_new_literal(GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, "Cannot load plugin");
         return FALSE;
     }
 
@@ -373,7 +342,6 @@ static gboolean application_init(Application *app, int *argc, char ***argv, GErr
        !gst_registry_check_feature_version(registry, "rtpjitterbuffer", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO))
     {
         g_warning("Missing GStreamer Good Plugins");
-        if(error) *error = g_error_new_literal(GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, "Cannot load plugin");
         return FALSE;
     }
 
@@ -383,16 +351,35 @@ static gboolean application_init(Application *app, int *argc, char ***argv, GErr
        !gst_registry_check_feature_version(registry, "rtpopuspay", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO))
     {
         g_warning("Missing Opus plugin for GStreamer");
-        if(error) *error = g_error_new_literal(GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, "Cannot load plugin");
         return FALSE;
     }
 
     if(!gst_plugin_register_static(GST_VERSION_MAJOR, GST_VERSION_MINOR, "rtpcrypto", "RTP encryption/decryption",
             plugin_init, PACKAGE_VERSION, "GPL", PACKAGE_TARNAME, PACKAGE_NAME, PACKAGE_URL))
     {
-        if(error) *error = g_error_new_literal(GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, "Cannot register plugin");
+        g_warning("Cannot register GStreamer plugin");
         return FALSE;
     }
+
+    initialized = TRUE;
+    return TRUE;
+}
+
+void application_add_option_group(GOptionContext *context)
+{
+    g_option_context_add_group(context, gtk_get_option_group(TRUE));
+    g_option_context_add_group(context, gst_init_get_option_group());
+}
+
+Application* application_new(DhtClient *client, const gchar *aliases_path, const gchar *sound_file, GError **error)
+{
+    Application *app = g_new0(Application, 1);
+    app->sound_file = g_strdup(sound_file);
+
+    app->client = g_object_ref(client);
+    g_signal_connect(app->client, "accept-connection", (GCallback)accept_connection, app);
+    g_signal_connect(app->client, "new-connection", (GCallback)new_connection, app);
+    g_signal_connect(app->client, "on-error", (GCallback)on_error, app);
 
     app->completions = gtk_list_store_new(2, G_TYPE_STRING, G_TYPE_STRING);
     if(aliases_path)
@@ -402,14 +389,15 @@ static gboolean application_init(Application *app, int *argc, char ***argv, GErr
         if(!channel)
         {
             g_warning("Failed to read aliases from %s", aliases_path);
-            return FALSE;
+            application_free(app);
+            return NULL;
         }
 
         while(1)
         {
             gsize len = 0;
             g_autofree gchar *str = NULL;
-            GIOStatus status = g_io_channel_read_line(channel, &str, &len, NULL, error);
+            GIOStatus status = g_io_channel_read_line(channel, &str, &len, NULL, NULL);
             if((status == G_IO_STATUS_EOF) || (status == G_IO_STATUS_ERROR)) break;
             if((status == G_IO_STATUS_NORMAL) && (len > DHT_ID_LENGTH))
             {
@@ -428,42 +416,6 @@ static gboolean application_init(Application *app, int *argc, char ***argv, GErr
                 }
             }
         }
-    }
-
-    g_autoptr(GBytes) key = NULL;
-    if(key_path)
-    {
-        // Load key from file
-        g_autoptr(GFile) file = g_file_new_for_path(key_path);
-
-        gsize len = DHT_KEY_SIZE;
-        guint8 buffer[len];
-        g_autoptr(GInputStream) stream = G_INPUT_STREAM(g_file_read(file, NULL, error));
-        if(!stream || !g_input_stream_read_all(stream, buffer, sizeof(buffer), &len, NULL, error))
-        {
-            g_warning("Failed to read key from %s", key_path);
-            return FALSE;
-        }
-
-        key = g_bytes_new(buffer, len);
-    }
-
-    // Create client
-    app->client = dht_client_new(ipv6 ? G_SOCKET_FAMILY_IPV6 : G_SOCKET_FAMILY_IPV4, local_port, key, error);
-    if(!app->client) return FALSE;
-
-    g_autofree gchar *id = NULL;
-    g_object_get(app->client, "id", &id, NULL);
-    g_info("%s Initialized", id);
-
-    // Connect signals and bootstrap
-    g_signal_connect(app->client, "accept-connection", (GCallback)accept_connection, app);
-    g_signal_connect(app->client, "new-connection", (GCallback)new_connection, app);
-    g_signal_connect(app->client, "on-error", (GCallback)on_error, app);
-    if(bootstrap_host && bootstrap_port && !dht_client_bootstrap(app->client, bootstrap_host, bootstrap_port, error))
-    {
-        g_warning("Failed to bootstrap %s. %s", bootstrap_host, (*error)->message);
-        g_clear_error(error);
     }
 
     // Create widgets
@@ -509,10 +461,15 @@ static gboolean application_init(Application *app, int *argc, char ***argv, GErr
     g_signal_connect(app->status_icon, "activate", (GCallback)window_toggle, app);
     g_object_set(app->status_icon, "tooltip-text", "Nanotalk", "title", "Nanotalk", NULL);
 
-    return TRUE;
+    return app;
 }
 
-static void application_cleanup(Application *app)
+void application_run(Application *app)
+{
+    gtk_main();
+}
+
+void application_free(Application *app)
 {
     if(app->button_stop && gtk_widget_is_sensitive(app->button_stop))
         call_stop(app->button_stop, app);
@@ -524,21 +481,5 @@ static void application_cleanup(Application *app)
     if(app->client) g_object_unref(app->client);
 
     g_free(app->sound_file);
-    memset(app, 0, sizeof(Application));
-}
-
-G_DEFINE_AUTO_CLEANUP_CLEAR_FUNC(Application, application_cleanup);
-
-int main(int argc, char **argv)
-{
-    g_autoptr(GError) error = NULL;
-    g_auto(Application) application = { };
-    if(!application_init(&application, &argc, &argv, &error))
-    {
-        g_critical("%s", error->message);
-        return 1;
-    }
-
-    gtk_main();
-    return 0;
+    g_free(app);
 }
