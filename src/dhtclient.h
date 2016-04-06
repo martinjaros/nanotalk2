@@ -46,7 +46,7 @@ struct _DhtClientClass
      * @client: Object instance that emitted the signal
      * @id: ID of the remote peer (20 bytes, Base64 encoded)
      *
-     * A signal emitted when a remote peer requests a connection.
+     * A virtual method implementing the #DhtClient::accept-connection signal.
      *
      * Returns: %TRUE if the connection should be accepted
      */

@@ -19,13 +19,26 @@
 
 typedef struct _application Application;
 
-gboolean application_init();
-void application_add_option_group(GOptionContext *context);
+#if ENABLE_GUI
 
-Application* application_new(DhtClient *client, const gchar *aliases_path, const gchar *sound_file, GError **error);
-void application_run(Application *app);
+void application_add_option_group(GOptionContext *context);
+gboolean application_init(GError **error);
+
+Application* application_new(DhtClient *client, const gchar *aliases_path, const gchar *sound_file);
 void application_free(Application *app);
 
-G_DEFINE_AUTOPTR_CLEANUP_FUNC(Application, application_free);
+void application_run();
+
+#else /* !ENABLE_GUI */
+#define application_add_option_group(context)
+#define application_init(error) TRUE
+#define application_new(client, arg1, arg2) ((Application*)g_object_ref(client))
+#define application_free(app) g_object_unref(app)
+static inline void application_run()
+{
+    g_autoptr(GMainLoop) loop = g_main_loop_new(NULL, FALSE);
+    g_main_loop_run(loop);
+}
+#endif  /* !ENABLE_GUI */
 
 #endif /* __APPLICATION_H__ */

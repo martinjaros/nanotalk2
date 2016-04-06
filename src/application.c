@@ -45,7 +45,7 @@ static void lookup_start(Application *app, const gchar *id)
     g_autoptr(GError) error = NULL;
     if(!dht_client_lookup(app->client, id, &error))
     {
-        g_info("%s %s", id, error->message);
+        g_message("%s %s", id, error->message);
         return;
     }
 
@@ -300,7 +300,7 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
 static void on_error(DhtClient *client, const gchar *id, GError *error, Application *app)
 {
     gtk_widget_set_sensitive(app->button_start, TRUE);
-    g_info("%s %s", id, error->message);
+    g_message("%s %s", id, error->message);
 }
 
 static void window_toggle(GtkWidget *widget, Application *app)
@@ -322,7 +322,7 @@ static gboolean plugin_init(GstPlugin *plugin)
            gst_element_register(plugin, "rtpdecrypt", GST_RANK_NONE, GST_TYPE_RTP_DECRYPT);
 }
 
-gboolean application_init()
+gboolean application_init(GError **error)
 {
     static gboolean initialized = FALSE;
     if(initialized) return TRUE;
@@ -331,7 +331,7 @@ gboolean application_init()
     if(!gst_registry_check_feature_version(registry, "playbin", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO) ||
        !gst_registry_check_feature_version(registry, "volume", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO))
     {
-        g_warning("Missing GStreamer Base Plugins");
+        g_set_error_literal(error, GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, "Missing GStreamer Base Plugins");
         return FALSE;
     }
 
@@ -341,7 +341,7 @@ gboolean application_init()
        !gst_registry_check_feature_version(registry, "autoaudiosink", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO) ||
        !gst_registry_check_feature_version(registry, "rtpjitterbuffer", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO))
     {
-        g_warning("Missing GStreamer Good Plugins");
+        g_set_error_literal(error, GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, "Missing GStreamer Good Plugins");
         return FALSE;
     }
 
@@ -350,14 +350,14 @@ gboolean application_init()
        !gst_registry_check_feature_version(registry, "opusenc", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO) ||
        !gst_registry_check_feature_version(registry, "rtpopuspay", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO))
     {
-        g_warning("Missing Opus plugin for GStreamer");
+        g_set_error_literal(error, GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, "Missing Opus plugin for GStreamer");
         return FALSE;
     }
 
     if(!gst_plugin_register_static(GST_VERSION_MAJOR, GST_VERSION_MINOR, "rtpcrypto", "RTP encryption/decryption",
             plugin_init, PACKAGE_VERSION, "GPL", PACKAGE_TARNAME, PACKAGE_NAME, PACKAGE_URL))
     {
-        g_warning("Cannot register GStreamer plugin");
+        g_set_error_literal(error, GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, "Cannot register GStreamer plugin");
         return FALSE;
     }
 
@@ -371,7 +371,7 @@ void application_add_option_group(GOptionContext *context)
     g_option_context_add_group(context, gst_init_get_option_group());
 }
 
-Application* application_new(DhtClient *client, const gchar *aliases_path, const gchar *sound_file, GError **error)
+Application* application_new(DhtClient *client, const gchar *aliases_path, const gchar *sound_file)
 {
     Application *app = g_new0(Application, 1);
     app->sound_file = g_strdup(sound_file);
@@ -385,15 +385,10 @@ Application* application_new(DhtClient *client, const gchar *aliases_path, const
     if(aliases_path)
     {
         // Load aliases from file
-        g_autoptr(GIOChannel) channel = g_io_channel_new_file(aliases_path, "r", error);
-        if(!channel)
-        {
-            g_warning("Failed to read aliases from %s", aliases_path);
-            application_free(app);
-            return NULL;
-        }
-
-        while(1)
+        g_autoptr(GError) error = NULL;
+        g_autoptr(GIOChannel) channel = g_io_channel_new_file(aliases_path, "r", &error);
+        if(!channel) g_warning("Failed to read aliases from %s. %s", aliases_path, error->message);
+        else while(1)
         {
             gsize len = 0;
             g_autofree gchar *str = NULL;
@@ -401,18 +396,15 @@ Application* application_new(DhtClient *client, const gchar *aliases_path, const
             if((status == G_IO_STATUS_EOF) || (status == G_IO_STATUS_ERROR)) break;
             if((status == G_IO_STATUS_NORMAL) && (len > DHT_ID_LENGTH))
             {
-                // Strip whitespace
-                gchar *start = str + DHT_ID_LENGTH, *end = str + len - 1;
-                while(g_ascii_isspace(*start)) start++;
-                while(g_ascii_isspace(*end)) end--;
-                if(start <= end)
+                // Split into ID and alias, strip trailing whitespace
+                str[DHT_ID_LENGTH] = 0;
+                gchar *end = str + len - 1;
+                while(g_ascii_isspace(*end)) *end-- = 0;
+                if(end > str + DHT_ID_LENGTH)
                 {
-                    g_autofree gchar *alias = g_strndup(start, end - start + 1);
-                    str[DHT_ID_LENGTH] = 0;
-
                     GtkTreeIter iter;
                     gtk_list_store_append(app->completions, &iter);
-                    gtk_list_store_set(app->completions, &iter, 0, str, 1, alias, -1);
+                    gtk_list_store_set(app->completions, &iter, 0, str, 1, str + DHT_ID_LENGTH + 1, -1);
                 }
             }
         }
@@ -464,22 +456,22 @@ Application* application_new(DhtClient *client, const gchar *aliases_path, const
     return app;
 }
 
-void application_run(Application *app)
-{
-    gtk_main();
-}
-
 void application_free(Application *app)
 {
-    if(app->button_stop && gtk_widget_is_sensitive(app->button_stop))
+    if(gtk_widget_is_sensitive(app->button_stop))
         call_stop(app->button_stop, app);
 
-    if(app->window) gtk_widget_destroy(app->window);
-    if(app->menu) gtk_widget_destroy(app->menu);
-    if(app->status_icon) g_object_unref(app->status_icon);
-    if(app->completions) g_object_unref(app->completions);
-    if(app->client) g_object_unref(app->client);
+    gtk_widget_destroy(app->window);
+    gtk_widget_destroy(app->menu);
+    g_object_unref(app->status_icon);
+    g_object_unref(app->completions);
+    g_object_unref(app->client);
 
     g_free(app->sound_file);
     g_free(app);
+}
+
+void application_run()
+{
+    gtk_main();
 }

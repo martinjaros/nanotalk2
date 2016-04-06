@@ -33,10 +33,7 @@ First, you need a private key, which is a 32-byte random sequence
     dd if=/dev/random of=/path/to/private.key bs=32 count=1 iflag=fullblock
 
 An unique ID is assigned to each key.
-To find out what ID does your key have, run the client and check the console output
-
-    G_MESSAGES_DEBUG=Nanotalk nanotalk -k /path/to/private.key
-
+To find out what ID does your key have, run the client and check the console output.
 You may create a text file with list of aliases for IDs you know. For example
 
     Eq2dQfYkQU17HY7A5N4k0TFJBuU= Name of this node
