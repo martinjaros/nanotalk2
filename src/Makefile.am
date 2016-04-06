@@ -3,7 +3,7 @@ LDADD = $(SODIUM_LIBS) $(GLIB_LIBS)
 
 bin_PROGRAMS = nanotalk
 nanotalk_SOURCES = main.c dhtclient.c
-noinst_HEADERS = dhtclient.h glib-compat.h gstrtpencrypt.h gstrtpdecrypt.h
+noinst_HEADERS = application.h dhtclient.h glib-compat.h gstrtpencrypt.h gstrtpdecrypt.h
 
 if ENABLE_GUI
 CFLAGS += $(GTK_CFLAGS) $(GST_CFLAGS)

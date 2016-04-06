@@ -23,7 +23,6 @@
 
 #define DEFAULT_PORT 5004
 
-#define REPORT_PERIOD 30 // seconds
 #define FORMAT_TIME_DHMS(x) x/86400000000,x/3600000000%24,x/60000000%60,x/1000000%60
 
 // Periodical status reporting
@@ -49,15 +48,15 @@ static gboolean print_report(DhtClient *client)
     g_autofree gchar *bytes_sent_str = g_format_size(bytes_sent);
     g_autofree gchar *address = g_inet_address_to_string(g_inet_socket_address_get_address(G_INET_SOCKET_ADDRESS(sockaddr)));
     guint16 port = g_inet_socket_address_get_port(G_INET_SOCKET_ADDRESS(sockaddr));
-    g_info("Status report\n"
-           "Public address: [%s]:%hu\n"
-           "Alive peers:    %u\n"
-           "Total uptime:   %lu days, %lu hours, %lu minutes, %lu seconds\n"
-           "Reception time: %lu days, %lu hours, %lu minutes, %lu seconds\n"
-           "Received:       %s (%lu packets)\n"
-           "Sent:           %s (%lu packets)\n",
-           address, port, peers, FORMAT_TIME_DHMS(uptime), FORMAT_TIME_DHMS(reception_time),
-           bytes_received_str, packets_received, bytes_sent_str, packets_sent);
+    g_message("Status report\n"
+              "Public address: [%s]:%hu\n"
+              "Alive peers:    %u\n"
+              "Total uptime:   %lu days, %lu hours, %lu minutes, %lu seconds\n"
+              "Reception time: %lu days, %lu hours, %lu minutes, %lu seconds\n"
+              "Received:       %s (%lu packets)\n"
+              "Sent:           %s (%lu packets)\n",
+        address, port, peers, FORMAT_TIME_DHMS(uptime), FORMAT_TIME_DHMS(reception_time),
+        bytes_received_str, packets_received, bytes_sent_str, packets_sent);
 
     return G_SOURCE_CONTINUE;
 }
@@ -71,17 +70,23 @@ static gboolean startup(int *argc, char ***argv, Application **app, GError **err
     g_autofree gchar *sound_file = NULL;
     gint bootstrap_port = DEFAULT_PORT;
     gint local_port = DEFAULT_PORT;
+    gint report_period = 0;
     gboolean ipv6 = FALSE;
     gboolean version = FALSE;
     GOptionEntry options[] =
     {
-        { "key", 'k', 0, G_OPTION_ARG_FILENAME, &key_path, "Private key", "FILE" },
-        { "aliases", 'a', 0, G_OPTION_ARG_FILENAME, &aliases_path, "List of aliases", "FILE" },
-        { "local-port", 'l', 0, G_OPTION_ARG_INT, &local_port, "Source port (default " G_STRINGIFY(DEFAULT_PORT) ")", "NUM" },
         { "ipv6", '6', 0, G_OPTION_ARG_NONE, &ipv6, "Enable IPv6", NULL },
+        { "key", 'k', 0, G_OPTION_ARG_FILENAME, &key_path, "Private key", "FILE" },
+        { "local-port", 'l', 0, G_OPTION_ARG_INT, &local_port, "Source port (default " G_STRINGIFY(DEFAULT_PORT) ")", "NUM" },
         { "bootstrap-host", 'h', 0, G_OPTION_ARG_STRING, &bootstrap_host, "Bootstrap address", "ADDR" },
         { "bootstrap-port", 'p', 0, G_OPTION_ARG_INT, &bootstrap_port, "Bootstrap port", "NUM" },
+
+#if ENABLE_GUI
+        { "aliases", 'a', 0, G_OPTION_ARG_FILENAME, &aliases_path, "List of aliases", "FILE" },
         { "call-sound", 's', 0, G_OPTION_ARG_STRING, &sound_file, "Incoming call sound", "FILE" },
+#endif /* ENABLE_GUI */
+
+        { "report-period", 'r', 0, G_OPTION_ARG_INT, &report_period, "Period of status reports (0 = disabled)", "SEC" },
         { "version", 'V', 0, G_OPTION_ARG_NONE, &version, "Print program version", NULL },
         { NULL }
     };
@@ -89,9 +94,7 @@ static gboolean startup(int *argc, char ***argv, Application **app, GError **err
     g_autoptr(GOptionContext) context = g_option_context_new(NULL);
     g_option_context_add_main_entries(context, options, NULL);
     g_option_context_set_summary(context, PACKAGE_STRING);
-    g_option_context_set_description(context,
-        "To see debug messages run the applications as:\nG_MESSAGES_DEBUG=Nanotalk nanotalk\n\n"
-        PACKAGE_BUGREPORT "\n" PACKAGE_URL);
+    g_option_context_set_description(context, PACKAGE_BUGREPORT "\n" PACKAGE_URL);
 
     application_add_option_group(context);
     if(!g_option_context_parse(context, argc, argv, error))
@@ -132,7 +135,7 @@ static gboolean startup(int *argc, char ***argv, Application **app, GError **err
     g_object_get(client, "id", &id, NULL);
     g_message("Client ID %s", id);
 
-    g_timeout_add_seconds(REPORT_PERIOD, (GSourceFunc)print_report, client);
+    if(report_period > 0) g_timeout_add_seconds(report_period, (GSourceFunc)print_report, client);
     *app = application_new(client, aliases_path, sound_file);
 
     return TRUE;
