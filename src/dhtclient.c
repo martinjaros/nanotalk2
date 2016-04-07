@@ -34,7 +34,7 @@
 #define MSG_CONNECTION_REQ 0xC2
 #define MSG_CONNECTION_RES 0xC3
 
-#define MSG_BUFFER_SIZE 2048
+#define MSG_BUFFER_SIZE 1500
 #define ADDR_SIZE_MAX 16
 #define ADDR_SIZE(family) (family == G_SOCKET_FAMILY_IPV4 ? 4 : ADDR_SIZE_MAX)
 
@@ -47,13 +47,11 @@ enum
     PROP_KEY_SIZE,
     PROP_ID,
     PROP_PEERS,
-    PROP_UPTIME,
-    PROP_RECEPTION_TIME,
+    PROP_LAST_SEEN,
     PROP_PACKETS_RECEIVED,
     PROP_PACKETS_SENT,
     PROP_BYTES_RECEIVED,
     PROP_BYTES_SENT,
-    PROP_PUBLIC_ADDRESS,
 };
 
 /* Signals */
@@ -179,12 +177,9 @@ struct _dht_client_private
     guint io_source, timeout_source; // GSource ID within default context
 
     // Statistics
-    gint64 start_time, reception_time;  // monotonic timestamp (microseconds)
+    GTimeVal last_seen;
     guint64 packets_received, packets_sent;
     guint64 bytes_received, bytes_sent;
-
-    guint8 public_address[ADDR_SIZE_MAX]; // as reported by peers
-    guint16 public_port;
 };
 
 static guint dht_client_signals[LAST_SIGNAL];
@@ -212,14 +207,14 @@ static void dht_lookup_destroy(gpointer arg);
 static gboolean dht_connection_timeout(gpointer arg);
 static void dht_connection_destroy(gpointer arg);
 
-static inline void dht_memxor(guint8 *metric, const guint8 *id1, const guint8 *id2)
+static inline void dht_xor(guint8 *metric, const guint8 *id1, const guint8 *id2)
 {
     int i;
     for(i = 0; i < DHT_HASH_SIZE; i++)
         metric[i] = id1[i] ^ id2[i];
 }
 
-static guint dht_hash_id_func(gconstpointer key)
+static guint dht_id_hash(gconstpointer key)
 {
     return (((guint8*)key)[DHT_HASH_SIZE - 4] << 24) |
            (((guint8*)key)[DHT_HASH_SIZE - 3] << 16) |
@@ -227,25 +222,25 @@ static guint dht_hash_id_func(gconstpointer key)
            (((guint8*)key)[DHT_HASH_SIZE - 1]);
 }
 
-static guint dht_hash_nonce_func(gconstpointer key)
+static guint dht_nonce_hash(gconstpointer key)
 {
-    return (((guint8*)key)[3] << 24) |
-           (((guint8*)key)[2] << 16) |
-           (((guint8*)key)[1] <<  8) |
-           (((guint8*)key)[0]);
+    return (((guint8*)key)[DHT_NONCE_SIZE - 4] << 24) |
+           (((guint8*)key)[DHT_NONCE_SIZE - 3] << 16) |
+           (((guint8*)key)[DHT_NONCE_SIZE - 2] <<  8) |
+           (((guint8*)key)[DHT_NONCE_SIZE - 1]);
 }
 
-static gboolean dht_equal_id_func(gconstpointer a, gconstpointer b)
+static gboolean dht_id_equal(gconstpointer a, gconstpointer b)
 {
     return memcmp(a, b, DHT_HASH_SIZE) == 0;
 }
 
-static gboolean dht_equal_nonce_func(gconstpointer a, gconstpointer b)
+static gboolean dht_nonce_equal(gconstpointer a, gconstpointer b)
 {
     return memcmp(a, b, DHT_NONCE_SIZE) == 0;
 }
 
-static gint dht_compare_metric_func(gconstpointer a, gconstpointer b, gpointer arg)
+static gint dht_metric_compare(gconstpointer a, gconstpointer b, gpointer arg)
 {
     return memcmp(a, b, DHT_HASH_SIZE);
 }
@@ -317,20 +312,13 @@ static void dht_client_class_init(DhtClientClass *client_class)
     g_object_class_install_property(object_class, PROP_PEERS,
             g_param_spec_uint("peers", "Peers", "Number of peers", 0, G_MAXUINT, 0,
                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
-    /**
-     * DhtClient:uptime:
-     * Number of microseconds since client creation.
-     */
-    g_object_class_install_property(object_class, PROP_UPTIME,
-            g_param_spec_int64("uptime", "Uptime", "Time since creation", 0, G_MAXINT64, 0,
-                    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     /**
-     * DhtClient:reception-time:
-     * Number of microseconds since last message reception.
+     * DhtClient:last-seen:
+     * Local time of last message reception.
      */
-    g_object_class_install_property(object_class, PROP_RECEPTION_TIME,
-            g_param_spec_int64("reception-time", "Reception time", "Time since last message", 0, G_MAXINT64, 0,
+    g_object_class_install_property(object_class, PROP_LAST_SEEN,
+            g_param_spec_boxed("last-seen", "Last seen", "Time of last message", G_TYPE_DATE_TIME,
                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -363,14 +351,6 @@ static void dht_client_class_init(DhtClientClass *client_class)
      */
     g_object_class_install_property(object_class, PROP_BYTES_SENT,
             g_param_spec_uint64("bytes-sent", "Bytes sent", "Number of sent bytes", 0, G_MAXUINT64, 0,
-                    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
-
-    /**
-     * DhtClient:public-address:
-     * Externally visible address of the socket.
-     */
-    g_object_class_install_property(object_class, PROP_PUBLIC_ADDRESS,
-            g_param_spec_object("public-address", "Public address", "Externally visible address", G_TYPE_SOCKET_ADDRESS,
                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -418,8 +398,8 @@ static void dht_client_class_init(DhtClientClass *client_class)
 static void dht_client_init(DhtClient *client)
 {
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
-    priv->lookup_table = g_hash_table_new_full(dht_hash_id_func, dht_equal_id_func, NULL, dht_lookup_destroy);
-    priv->connection_table = g_hash_table_new_full(dht_hash_nonce_func, dht_equal_nonce_func, NULL, dht_connection_destroy);
+    priv->lookup_table = g_hash_table_new_full(dht_id_hash, dht_id_equal, NULL, dht_lookup_destroy);
+    priv->connection_table = g_hash_table_new_full(dht_nonce_hash, dht_nonce_equal, NULL, dht_connection_destroy);
     priv->key_size = DHT_KEY_SIZE;
 }
 
@@ -635,15 +615,9 @@ static void dht_client_get_property(GObject *obj, guint prop, GValue *value, GPa
             break;
         }
 
-        case PROP_UPTIME:
+        case PROP_LAST_SEEN:
         {
-            g_value_set_int64(value, g_get_monotonic_time() - priv->start_time);
-            break;
-        }
-
-        case PROP_RECEPTION_TIME:
-        {
-            g_value_set_int64(value, priv->reception_time ? g_get_monotonic_time() - priv->reception_time : 0);
+            g_value_take_boxed(value, g_date_time_new_from_timeval_local(&priv->last_seen));
             break;
         }
 
@@ -671,13 +645,6 @@ static void dht_client_get_property(GObject *obj, guint prop, GValue *value, GPa
             break;
         }
 
-        case PROP_PUBLIC_ADDRESS:
-        {
-            g_autoptr(GInetAddress) in_addr = g_inet_address_new_from_bytes(priv->public_address, priv->family);
-            g_value_take_object(value, g_inet_socket_address_new(in_addr, priv->public_port));
-            break;
-        }
-
         default:
             G_OBJECT_WARN_INVALID_PROPERTY_ID(obj, prop, pspec);
             break;
@@ -698,7 +665,6 @@ static void dht_client_constructed(GObject *obj)
     g_source_set_callback(source, (GSourceFunc)dht_client_receive, client, NULL);
     priv->io_source = g_source_attach(source, g_main_context_default());
     priv->timeout_source = g_timeout_add(DHT_REFRESH_MS, dht_client_refresh, client);
-    priv->start_time = g_get_monotonic_time();
 
     // Chain to parent
     G_OBJECT_CLASS(dht_client_parent_class)->constructed(obj);
@@ -787,10 +753,9 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
         guint16 port = g_inet_socket_address_get_port(G_INET_SOCKET_ADDRESS(sockaddr));
         gsize addr_size = ADDR_SIZE(priv->family);
         gsize node_size = sizeof(MsgNode) + addr_size;
-
-        priv->reception_time = g_get_monotonic_time();
         priv->packets_received++;
         priv->bytes_received += len;
+
         switch(*(guint8*)buffer)
         {
             case MSG_LOOKUP_REQ:
@@ -835,9 +800,9 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
                 if(lookup)
                 {
                     guint8 metric[DHT_HASH_SIZE];
-                    dht_memxor(metric, msg->srcid, lookup->id);
+                    dht_xor(metric, msg->srcid, lookup->id);
 
-                    GSequenceIter *iter = g_sequence_lookup(lookup->queries, metric, dht_compare_metric_func, NULL);
+                    GSequenceIter *iter = g_sequence_lookup(lookup->queries, metric, dht_metric_compare, NULL);
                     if(iter)
                     {
                         // Finalize existing query
@@ -855,13 +820,13 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
                     {
                         // Insert finalized query
                         DhtQuery *query = g_slice_new0(DhtQuery);
-                        dht_memxor(query->metric, msg->srcid, msg->dstid);
+                        dht_xor(query->metric, msg->srcid, msg->dstid);
                         memcpy(query->addr, addr, addr_size);
                         query->port = port;
                         query->is_finished = TRUE;
                         query->is_alive = TRUE;
                         query->parent = lookup;
-                        g_sequence_insert_sorted(lookup->queries, query, dht_compare_metric_func, NULL);
+                        g_sequence_insert_sorted(lookup->queries, query, dht_metric_compare, NULL);
                     }
 
                     g_autoptr(GError) error = NULL;
@@ -967,15 +932,17 @@ static void dht_client_update(DhtClient *client, gconstpointer id, gboolean is_a
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
     gsize addr_size = ADDR_SIZE(priv->family);
 
-    g_debug("update node %016lx (%s)", GUINT64_FROM_BE(*(guint64*)id), is_alive ? "alive" : "timed-out");
+    g_debug("update node %08x (%s)", dht_id_hash(id), is_alive ? "alive" : "timed-out");
+    if(is_alive) g_get_current_time(&priv->last_seen);
+
     guint8 metric[DHT_HASH_SIZE], nbits;
-    dht_memxor(metric, priv->id, id);
+    dht_xor(metric, priv->id, id);
 
     DhtBucket *bucket = &priv->root_bucket;
     for(nbits = 0; bucket->next && !(metric[nbits / 8] & (0x80 >> nbits % 8)); nbits++)
         bucket = bucket->next;
 
-    int i;
+    gsize i;
     for(i = 0; i < bucket->count; i++)
     {
         if(memcmp(bucket->nodes[i].id, id, DHT_HASH_SIZE) == 0)
@@ -986,7 +953,7 @@ static void dht_client_update(DhtClient *client, gconstpointer id, gboolean is_a
             {
                 memcpy(bucket->nodes[i].addr, addr, addr_size);
                 bucket->nodes[i].port = port;
-                bucket->nodes[i].last_seen = priv->reception_time;
+                bucket->nodes[i].last_seen = g_get_monotonic_time();
             }
 
             return;
@@ -1026,7 +993,7 @@ static void dht_client_update(DhtClient *client, gconstpointer id, gboolean is_a
         // Append new node
         memcpy(bucket->nodes[bucket->count].id, id, DHT_HASH_SIZE);
         bucket->nodes[bucket->count].is_alive = TRUE;
-        bucket->nodes[bucket->count].last_seen = priv->reception_time;
+        bucket->nodes[bucket->count].last_seen = g_get_monotonic_time();
 
         memcpy(bucket->nodes[bucket->count].addr, addr, addr_size);
         bucket->nodes[bucket->count].port = port;
@@ -1041,7 +1008,7 @@ static void dht_client_update(DhtClient *client, gconstpointer id, gboolean is_a
             // Replace dead node
             memcpy(bucket->nodes[i].id, id, DHT_HASH_SIZE);
             bucket->nodes[i].is_alive = TRUE;
-            bucket->nodes[i].last_seen = priv->reception_time;
+            bucket->nodes[i].last_seen = g_get_monotonic_time();
 
             memcpy(bucket->nodes[i].addr, addr, addr_size);
             bucket->nodes[i].port = port;
@@ -1060,7 +1027,7 @@ static gsize dht_client_search(DhtClient *client, gconstpointer id, gpointer nod
 
     gint64 current_time = g_get_monotonic_time();
     guint8 metric[DHT_HASH_SIZE], nbits = 0, dir = 1;
-    dht_memxor(metric, priv->id, id);
+    dht_xor(metric, priv->id, id);
 
     gsize count = 0;
     DhtBucket *bucket = &priv->root_bucket;
@@ -1068,7 +1035,7 @@ static gsize dht_client_search(DhtClient *client, gconstpointer id, gpointer nod
     {
         if(!(metric[nbits / 8] & (0x80 >> (nbits % 8))) == !dir)
         {
-            int i;
+            gsize i;
             for(i = 0; (i < bucket->count) && (count < DHT_NODE_COUNT); i++)
             {
                 // Ignore timed out nodes
@@ -1117,7 +1084,7 @@ static gboolean dht_query_timeout(gpointer arg)
 
     // Update node
     guint8 id[DHT_HASH_SIZE];
-    dht_memxor(id, query->metric, lookup->id);
+    dht_xor(id, query->metric, lookup->id);
     dht_client_update(client, id, FALSE, NULL, 0);
     query->is_finished = TRUE;
 
@@ -1160,13 +1127,9 @@ static gboolean dht_lookup_update(DhtLookup *lookup, gconstpointer node_ptr, gsi
         const MsgNode *node = node_ptr;
         node_ptr += node_size;
 
-        // Skip own ID, save address
+        // Skip own ID
         if(memcmp(node->id, priv->id, DHT_HASH_SIZE) == 0)
-        {
-            priv->public_port = GUINT16_FROM_BE(node->port);
-            memcpy(priv->public_address, node->addr, addr_size);
             continue;
-        }
 
         // Check if this is the target node
         if(memcmp(node->id, lookup->id, DHT_HASH_SIZE) == 0)
@@ -1205,10 +1168,10 @@ static gboolean dht_lookup_update(DhtLookup *lookup, gconstpointer node_ptr, gsi
         }
 
         guint8 metric[DHT_HASH_SIZE];
-        dht_memxor(metric, lookup->id, node->id);
+        dht_xor(metric, lookup->id, node->id);
 
         // Skip duplicates
-        GSequenceIter *iter = g_sequence_search(lookup->queries, metric, dht_compare_metric_func, NULL);
+        GSequenceIter *iter = g_sequence_search(lookup->queries, metric, dht_metric_compare, NULL);
         if(!g_sequence_iter_is_begin(iter) && !memcmp(g_sequence_get(g_sequence_iter_prev(iter)), metric, DHT_HASH_SIZE))
             continue;
 
@@ -1229,6 +1192,7 @@ static gboolean dht_lookup_dispatch(DhtLookup *lookup, GError **error)
 {
     DhtClient *client = lookup->parent;
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
+    g_debug("dispatching lookup %08x", dht_id_hash(lookup->id));
 
     gsize num_alive = 0;
     GSequenceIter *iter = g_sequence_get_begin_iter(lookup->queries);
@@ -1271,7 +1235,6 @@ static gboolean dht_lookup_dispatch(DhtLookup *lookup, GError **error)
             return TRUE;
         }
 
-        g_debug("lookup failed");
         g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_HOST_NOT_FOUND, "DHT lookup failed");
         g_hash_table_remove(priv->lookup_table, lookup->id);
         return FALSE;
@@ -1316,7 +1279,6 @@ static gboolean dht_connection_timeout(gpointer arg)
     DhtClient *client = connection->parent;
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
 
-    g_debug("connection timeout");
     g_autofree gchar *id_base64 = g_base64_encode(connection->id, DHT_HASH_SIZE);
     g_autoptr(GError) error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_TIMED_OUT, "Connection timed out");
     g_signal_emit(client, dht_client_signals[SIGNAL_ON_ERROR], 0, id_base64, error);

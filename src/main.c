@@ -16,63 +16,64 @@
 #include <config.h>
 #endif /* HAVE_CONFIG_H */
 
-#define G_LOG_DOMAIN "Nanotalk"
+#ifdef unix
+#include <glib-unix.h>
+#endif /* unix */
 
-#include <stdlib.h>
+#include "dhtclient.h"
+
+#if ENABLE_GUI
 #include "application.h"
+static Application *application = NULL;
+#endif /* ENABLE_GUI */
 
 #define DEFAULT_PORT 5004
 
-#define FORMAT_TIME_DHMS(x) x/86400000000,x/3600000000%24,x/60000000%60,x/1000000%60
-
-// Periodical status reporting
-static gboolean print_report(DhtClient *client)
+// Called for SIGUSR1
+static gboolean print_stats(DhtClient *client)
 {
-    g_autoptr(GSocketAddress) sockaddr = NULL;
     guint peers = 0;
-    gint64 uptime = 0, reception_time = 0;
-    guint64 packets_received = 0, packets_sent = 0;
-    guint64 bytes_received = 0, bytes_sent = 0;
+    g_autoptr(GDateTime) last_seen = NULL;
+    guint64 bytes_received = 0, packets_received = 0;
+    guint64 bytes_sent = 0, packets_sent = 0;
     g_object_get(client,
-            "public-address", &sockaddr,
             "peers", &peers,
-            "uptime", &uptime,
-            "reception-time", &reception_time,
-            "packets-received", &packets_received,
-            "packets-sent", &packets_sent,
+            "last-seen", &last_seen,
             "bytes-received", &bytes_received,
+            "packets-received", &packets_received,
             "bytes-sent", &bytes_sent,
+            "packets-sent", &packets_sent,
             NULL);
 
+    // Print statistics
+    g_autofree gchar *last_seen_str = g_date_time_format(last_seen, "%c");
     g_autofree gchar *bytes_received_str = g_format_size(bytes_received);
     g_autofree gchar *bytes_sent_str = g_format_size(bytes_sent);
-    g_autofree gchar *address = g_inet_address_to_string(g_inet_socket_address_get_address(G_INET_SOCKET_ADDRESS(sockaddr)));
-    guint16 port = g_inet_socket_address_get_port(G_INET_SOCKET_ADDRESS(sockaddr));
-    g_message("Status report\n"
-              "Public address: [%s]:%hu\n"
-              "Alive peers:    %u\n"
-              "Total uptime:   %lu days, %lu hours, %lu minutes, %lu seconds\n"
-              "Reception time: %lu days, %lu hours, %lu minutes, %lu seconds\n"
-              "Received:       %s (%lu packets)\n"
-              "Sent:           %s (%lu packets)\n",
-        address, port, peers, FORMAT_TIME_DHMS(uptime), FORMAT_TIME_DHMS(reception_time),
-        bytes_received_str, packets_received, bytes_sent_str, packets_sent);
+    g_print("\n"
+            "Peers:     %u\n"
+            "Last seen: %s\n"
+            "Received:  %s (%lu packets)\n"
+            "Sent:      %s (%lu packets)\n",
+            peers, last_seen_str, bytes_received_str, packets_received, bytes_sent_str, packets_sent);
 
     return G_SOURCE_CONTINUE;
 }
 
-static gboolean startup(int *argc, char ***argv, Application **app, GError **error)
+static gboolean startup(int *argc, char ***argv, GError **error)
 {
     g_autoptr(GBytes) key = NULL;
     g_autofree gchar *key_path = NULL;
-    g_autofree gchar *aliases_path = NULL;
     g_autofree gchar *bootstrap_host = NULL;
-    g_autofree gchar *sound_file = NULL;
     gint bootstrap_port = DEFAULT_PORT;
     gint local_port = DEFAULT_PORT;
-    gint report_period = 0;
     gboolean ipv6 = FALSE;
     gboolean version = FALSE;
+
+#if ENABLE_GUI
+    g_autofree gchar *aliases_path = NULL;
+    g_autofree gchar *sound_file = NULL;
+#endif /* ENABLE_GUI */
+
     GOptionEntry options[] =
     {
         { "ipv6", '6', 0, G_OPTION_ARG_NONE, &ipv6, "Enable IPv6", NULL },
@@ -86,7 +87,6 @@ static gboolean startup(int *argc, char ***argv, Application **app, GError **err
         { "call-sound", 's', 0, G_OPTION_ARG_STRING, &sound_file, "Incoming call sound", "FILE" },
 #endif /* ENABLE_GUI */
 
-        { "report-period", 'r', 0, G_OPTION_ARG_INT, &report_period, "Period of status reports (0 = disabled)", "SEC" },
         { "version", 'V', 0, G_OPTION_ARG_NONE, &version, "Print program version", NULL },
         { NULL }
     };
@@ -96,7 +96,10 @@ static gboolean startup(int *argc, char ***argv, Application **app, GError **err
     g_option_context_set_summary(context, PACKAGE_STRING);
     g_option_context_set_description(context, PACKAGE_BUGREPORT "\n" PACKAGE_URL);
 
+#if ENABLE_GUI
     application_add_option_group(context);
+#endif /* ENABLE_GUI */
+
     if(!g_option_context_parse(context, argc, argv, error))
         return FALSE;
 
@@ -107,8 +110,10 @@ static gboolean startup(int *argc, char ***argv, Application **app, GError **err
         exit(EXIT_SUCCESS);
     }
 
+#if ENABLE_GUI
     if(!application_init(error))
         return FALSE;
+#endif /* ENABLE_GUI */
 
     if(key_path)
     {
@@ -125,7 +130,7 @@ static gboolean startup(int *argc, char ***argv, Application **app, GError **err
     }
 
     // Create client and bootstrap
-    g_autoptr(DhtClient) client = dht_client_new(ipv6 ? G_SOCKET_FAMILY_IPV6 : G_SOCKET_FAMILY_IPV4, local_port, key, error);
+    DhtClient *client = dht_client_new(ipv6 ? G_SOCKET_FAMILY_IPV6 : G_SOCKET_FAMILY_IPV4, local_port, key, error);
     if(!client) return FALSE;
 
     if(bootstrap_host && bootstrap_port && !dht_client_bootstrap(client, bootstrap_host, bootstrap_port, error))
@@ -133,10 +138,16 @@ static gboolean startup(int *argc, char ***argv, Application **app, GError **err
 
     g_autofree gchar *id = NULL;
     g_object_get(client, "id", &id, NULL);
-    g_message("Client ID %s", id);
+    g_print("Client ID %s\n", id);
 
-    if(report_period > 0) g_timeout_add_seconds(report_period, (GSourceFunc)print_report, client);
-    *app = application_new(client, aliases_path, sound_file);
+#if unix
+    g_unix_signal_add(SIGUSR1, (GSourceFunc)print_stats, client);
+#endif /* unix */
+
+#if ENABLE_GUI
+    application = application_new(client, aliases_path, sound_file);
+    g_object_unref(client);
+#endif /* ENABLE_GUI */
 
     return TRUE;
 }
@@ -144,14 +155,19 @@ static gboolean startup(int *argc, char ***argv, Application **app, GError **err
 int main(int argc, char **argv)
 {
     GError *error = NULL;
-    Application *app = NULL;
-    if(!startup(&argc, &argv, &app, &error))
+    if(!startup(&argc, &argv, &error))
     {
         g_printerr("%s\n", error->message);
         return EXIT_FAILURE;
     }
 
+#if ENABLE_GUI
     application_run();
-    application_free(app);
+    application_free(application);
+#else
+    GMainLoop *loop = g_main_loop_new(NULL, FALSE);
+    g_main_loop_run(loop);
+#endif /* ENABLE_GUI */
+
     return EXIT_SUCCESS;
 }

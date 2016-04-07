@@ -311,6 +311,19 @@ static void window_toggle(GtkWidget *widget, Application *app)
         gtk_widget_hide(app->window);
 }
 
+static void show_about(GtkWidget *widget, Application *app)
+{
+    const gchar *authors[] = { "Martin Jaros <xjaros32@stud.feec.vutbr.cz>", NULL };
+    gtk_show_about_dialog(NULL,
+        "logo-icon-name", "call-start-symbolic",
+        "version", PACKAGE_VERSION,
+        "comments", PACKAGE_NAME,
+        "authors", authors,
+        "license-type", GTK_LICENSE_GPL_2_0,
+        "website", PACKAGE_URL,
+        NULL);
+}
+
 static void menu_popup(GtkWidget *widget, guint button, guint activate_time, Application *app)
 {
     gtk_menu_popup(GTK_MENU(app->menu), NULL, NULL, gtk_status_icon_position_menu, widget, button, activate_time);
@@ -440,14 +453,30 @@ Application* application_new(DhtClient *client, const gchar *aliases_path, const
     g_object_set(app->window, "icon-name", "call-start-symbolic", "title", "Nanotalk", "resizable", FALSE, NULL);
     gtk_container_add(GTK_CONTAINER(app->window), GTK_WIDGET(grid));
 
-    // Status icon
-    GtkWidget *menu_quit = gtk_menu_item_new_with_label("Quit");
-    g_signal_connect(menu_quit, "activate", (GCallback)gtk_main_quit, NULL);
-
+    // Status icon menu
     app->menu = gtk_menu_new();
-    gtk_menu_shell_append(GTK_MENU_SHELL(app->menu), menu_quit);
-    gtk_widget_show_all(app->menu);
 
+    GtkWidget *menu_item = gtk_menu_item_new();
+    g_signal_connect(menu_item, "activate", (GCallback)show_about, app);
+    GtkWidget *menu_icon = gtk_image_new_from_icon_name("help-about", GTK_ICON_SIZE_MENU);
+    GtkWidget *menu_label = gtk_label_new("About");
+    GtkWidget *menu_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_container_add(GTK_CONTAINER(menu_box), menu_icon);
+    gtk_container_add(GTK_CONTAINER(menu_box), menu_label);
+    gtk_container_add(GTK_CONTAINER(menu_item), menu_box);
+    gtk_menu_shell_append(GTK_MENU_SHELL(app->menu), menu_item);
+
+    menu_item = gtk_menu_item_new();
+    g_signal_connect(menu_item, "activate", (GCallback)gtk_main_quit, NULL);
+    menu_icon = gtk_image_new_from_icon_name("application-exit", GTK_ICON_SIZE_MENU);
+    menu_label = gtk_label_new("Quit");
+    menu_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_container_add(GTK_CONTAINER(menu_box), menu_icon);
+    gtk_container_add(GTK_CONTAINER(menu_box), menu_label);
+    gtk_container_add(GTK_CONTAINER(menu_item), menu_box);
+    gtk_menu_shell_append(GTK_MENU_SHELL(app->menu), menu_item);
+
+    gtk_widget_show_all(app->menu);
     app->status_icon = gtk_status_icon_new_from_icon_name("call-start-symbolic");
     g_signal_connect(app->status_icon, "popup-menu", (GCallback)menu_popup, app);
     g_signal_connect(app->status_icon, "activate", (GCallback)window_toggle, app);
