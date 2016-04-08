@@ -200,8 +200,8 @@ static gsize dht_client_search(DhtClient *client, gconstpointer id, gpointer nod
 static gboolean dht_query_timeout(gpointer arg);
 static void dht_query_destroy(gpointer arg);
 
-static gboolean dht_lookup_update(DhtLookup *lookup, gconstpointer node_ptr, gsize count, GError **error);
-static gboolean dht_lookup_dispatch(DhtLookup *lookup, GError **error);
+static gboolean dht_lookup_update(DhtLookup *lookup, gconstpointer node_ptr, gsize count, gboolean emit_error, GError **error);
+static gboolean dht_lookup_dispatch(DhtLookup *lookup, gboolean emit_error, GError **error);
 static gboolean dht_lookup_timeout(gpointer arg);
 static void dht_lookup_destroy(gpointer arg);
 
@@ -524,7 +524,7 @@ gboolean dht_client_lookup(DhtClient *client, const gchar *id_base64, GError **e
     // Dispatch lookup
     guint8 nodes[DHT_NODE_COUNT * (sizeof(MsgNode) + ADDR_SIZE(priv->family))];
     gsize count = dht_client_search(client, id, nodes);
-    return dht_lookup_update(lookup, nodes, count, error);
+    return dht_lookup_update(lookup, nodes, count, FALSE, error);
 }
 
 static void dht_client_set_property(GObject *obj, guint prop_id, const GValue *value, GParamSpec *pspec)
@@ -732,7 +732,7 @@ static gboolean dht_client_refresh(gpointer arg)
     // Dispatch lookup
     guint8 nodes[DHT_NODE_COUNT * (sizeof(MsgNode) + ADDR_SIZE(priv->family))];
     count = dht_client_search(client, lookup->id, nodes);
-    dht_lookup_update(lookup, nodes, count, NULL);
+    dht_lookup_update(lookup, nodes, count, FALSE, NULL);
 
     return G_SOURCE_CONTINUE;
 }
@@ -833,11 +833,7 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
                     }
 
                     g_autoptr(GError) error = NULL;
-                    if(!dht_lookup_update(lookup, msg->nodes, count, &error))
-                    {
-                        g_autofree gchar *id_base64 = g_base64_encode(lookup->id, DHT_HASH_SIZE);
-                        g_signal_emit(client, dht_client_signals[SIGNAL_ON_ERROR], 0, id_base64, *error);
-                    }
+                    dht_lookup_update(lookup, msg->nodes, count, TRUE, &error);
                 }
 
                 break;
@@ -1097,12 +1093,7 @@ static gboolean dht_query_timeout(gpointer arg)
 
     // Dispatch lookup
     g_autoptr(GError) error = NULL;
-    if(!dht_lookup_dispatch(lookup, &error))
-    {
-        g_autofree gchar *id_base64 = g_base64_encode(lookup->id, DHT_HASH_SIZE);
-        g_signal_emit(client, dht_client_signals[SIGNAL_ON_ERROR], 0, id_base64, *error);
-    }
-
+    dht_lookup_dispatch(lookup, TRUE, &error);
     return G_SOURCE_REMOVE;
 }
 
@@ -1118,7 +1109,7 @@ static void dht_query_destroy(gpointer arg)
     g_slice_free(DhtQuery, query);
 }
 
-static gboolean dht_lookup_update(DhtLookup *lookup, gconstpointer node_ptr, gsize count, GError **error)
+static gboolean dht_lookup_update(DhtLookup *lookup, gconstpointer node_ptr, gsize count, gboolean emit_error, GError **error)
 {
     DhtClient *client = lookup->parent;
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
@@ -1188,10 +1179,10 @@ static gboolean dht_lookup_update(DhtLookup *lookup, gconstpointer node_ptr, gsi
         g_sequence_insert_before(iter, query);
     }
 
-    return dht_lookup_dispatch(lookup, error);
+    return dht_lookup_dispatch(lookup, emit_error, error);
 }
 
-static gboolean dht_lookup_dispatch(DhtLookup *lookup, GError **error)
+static gboolean dht_lookup_dispatch(DhtLookup *lookup, gboolean emit_error, GError **error)
 {
     DhtClient *client = lookup->parent;
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
@@ -1239,6 +1230,12 @@ static gboolean dht_lookup_dispatch(DhtLookup *lookup, GError **error)
         }
 
         g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_HOST_NOT_FOUND, _("DHT lookup failed"));
+        if(error && emit_error)
+        {
+            g_autofree gchar *id_base64 = g_base64_encode(lookup->id, DHT_HASH_SIZE);
+            g_signal_emit(client, dht_client_signals[SIGNAL_ON_ERROR], 0, id_base64, *error);
+        }
+
         g_hash_table_remove(priv->lookup_table, lookup->id);
         return FALSE;
     }
