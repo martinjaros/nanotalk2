@@ -1,4 +1,3 @@
-local rtp_dissector = Dissector.get("rtp")
 local nanotalk_proto = Proto("nanotalk", "Nanotalk distributed multimedia service")
 
 nanotalk_proto.dissector = function(buffer, info, tree)
@@ -57,8 +56,6 @@ nanotalk_proto.dissector = function(buffer, info, tree)
                 subtree:add(buffer(33, 32), "Source nonce: " .. tostring(buffer(33, 32)))
                 subtree:add(buffer(65, 32), "Peer nonce: " .. tostring(buffer(65, 32)))
             end
-        else
-            rtp_dissector:call(buffer, info, tree)
         end
     end
 end

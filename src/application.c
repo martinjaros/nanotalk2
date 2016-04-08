@@ -313,7 +313,7 @@ static void window_toggle(GtkWidget *widget, Application *app)
 
 static void show_about(GtkWidget *widget, Application *app)
 {
-    const gchar *authors[] = { "Martin Jaros <xjaros32@stud.feec.vutbr.cz>", NULL };
+    const gchar *authors[] = { "Martin Jaro\xC5\xA1 <xjaros32@stud.feec.vutbr.cz>", NULL };
     gtk_show_about_dialog(NULL,
         "logo-icon-name", "call-start-symbolic",
         "version", PACKAGE_VERSION,

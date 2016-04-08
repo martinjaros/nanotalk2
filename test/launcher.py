@@ -27,7 +27,7 @@ try:
     proc1.wait()
     proc2.wait()
 except KeyboardInterrupt:
-    print
+    sys.stdout.write('\n')
 
 if GRAPHS:
     subprocess.call('dot -O -Tsvg *-pipeline.dot', shell=True)

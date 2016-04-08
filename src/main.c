@@ -16,18 +16,17 @@
 #include <config.h>
 #endif /* HAVE_CONFIG_H */
 
-#ifdef unix
-#include <glib-unix.h>
-#endif /* unix */
-
-#include "dhtclient.h"
-
 #if ENABLE_GUI
 #include "application.h"
 static Application *application = NULL;
 #endif /* ENABLE_GUI */
 
+#include "dhtclient.h"
+
 #define DEFAULT_PORT 5004
+
+#ifdef G_OS_UNIX
+#include <glib-unix.h>
 
 // Called for SIGUSR1
 static gboolean print_stats(DhtClient *client)
@@ -58,6 +57,8 @@ static gboolean print_stats(DhtClient *client)
 
     return G_SOURCE_CONTINUE;
 }
+
+#endif /* G_OS_UNIX */
 
 static gboolean startup(int *argc, char ***argv, GError **error)
 {
@@ -140,9 +141,9 @@ static gboolean startup(int *argc, char ***argv, GError **error)
     g_object_get(client, "id", &id, NULL);
     g_print("Client ID %s\n", id);
 
-#if unix
+#ifdef G_OS_UNIX
     g_unix_signal_add(SIGUSR1, (GSourceFunc)print_stats, client);
-#endif /* unix */
+#endif /* G_OS_UNIX */
 
 #if ENABLE_GUI
     application = application_new(client, aliases_path, sound_file);
