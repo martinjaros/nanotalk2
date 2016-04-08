@@ -1,0 +1,1 @@
+SUBDIRS = cs_CZ.UTF8

@@ -16,6 +16,7 @@
 
 #include <string.h>
 #include <sodium.h>
+#include <glib/gi18n.h>
 #include "dhtclient.h"
 
 #define DHT_NONCE_SIZE 32
@@ -277,7 +278,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * 32-byte private key.
      */
     g_object_class_install_property(object_class, PROP_KEY,
-            g_param_spec_boxed("key", "Key", "Client private key", G_TYPE_BYTES,
+            g_param_spec_boxed("key", _("Key"), _("Client private key"), G_TYPE_BYTES,
                     G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -285,7 +286,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * IPv4 or IPv6 datagram socket used for IO operations.
      */
     g_object_class_install_property(object_class, PROP_SOCKET,
-            g_param_spec_object("socket", "Socket", "Client socket", G_TYPE_SOCKET,
+            g_param_spec_object("socket", _("Socket"), _("Client socket"), G_TYPE_SOCKET,
                     G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -293,7 +294,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * Size of the derived keys passed to #DhtClient::new-connection signal.
      */
     g_object_class_install_property(object_class, PROP_KEY_SIZE,
-            g_param_spec_uint("key-size", "Key size", "Size of the derived keys",
+            g_param_spec_uint("key-size", _("Key size"), _("Size of the derived keys"),
                     crypto_generichash_BYTES_MIN, crypto_generichash_BYTES_MAX, crypto_generichash_BYTES,
                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
@@ -302,7 +303,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * Client ID derived from private key (20 bytes, Base64 encoded).
      */
     g_object_class_install_property(object_class, PROP_ID,
-            g_param_spec_string("id", "ID", "Client ID", NULL,
+            g_param_spec_string("id", _("ID"), _("Client ID"), NULL,
                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -310,7 +311,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * Number of alive peers the client knows about.
      */
     g_object_class_install_property(object_class, PROP_PEERS,
-            g_param_spec_uint("peers", "Peers", "Number of peers", 0, G_MAXUINT, 0,
+            g_param_spec_uint("peers", _("Peers"), _("Number of peers"), 0, G_MAXUINT, 0,
                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -318,7 +319,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * Local time of last message reception.
      */
     g_object_class_install_property(object_class, PROP_LAST_SEEN,
-            g_param_spec_boxed("last-seen", "Last seen", "Time of last message", G_TYPE_DATE_TIME,
+            g_param_spec_boxed("last-seen", _("Last seen"), _("Time of last message"), G_TYPE_DATE_TIME,
                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -326,7 +327,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * Total number of received packets.
      */
     g_object_class_install_property(object_class, PROP_PACKETS_RECEIVED,
-            g_param_spec_uint64("packets-received", "Packets received", "Number of received packets", 0, G_MAXUINT64, 0,
+            g_param_spec_uint64("packets-received", _("Packets received"), _("Number of received packets"), 0, G_MAXUINT64, 0,
                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -334,7 +335,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * Total number of sent packets.
      */
     g_object_class_install_property(object_class, PROP_PACKETS_SENT,
-            g_param_spec_uint64("packets-sent", "Packets sent", "Number of sent packets", 0, G_MAXUINT64, 0,
+            g_param_spec_uint64("packets-sent", _("Packets sent"), _("Number of sent packets"), 0, G_MAXUINT64, 0,
                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -342,7 +343,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * Total number of received bytes.
      */
     g_object_class_install_property(object_class, PROP_BYTES_RECEIVED,
-            g_param_spec_uint64("bytes-received", "Bytes received", "Number of received bytes", 0, G_MAXUINT64, 0,
+            g_param_spec_uint64("bytes-received", _("Bytes received"), _("Number of received bytes"), 0, G_MAXUINT64, 0,
                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -350,7 +351,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * Total number of sent bytes.
      */
     g_object_class_install_property(object_class, PROP_BYTES_SENT,
-            g_param_spec_uint64("bytes-sent", "Bytes sent", "Number of sent bytes", 0, G_MAXUINT64, 0,
+            g_param_spec_uint64("bytes-sent", _("Bytes sent"), _("Number of sent bytes"), 0, G_MAXUINT64, 0,
                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -407,7 +408,7 @@ DhtClient* dht_client_new(GSocketFamily family, guint16 port, GBytes *key, GErro
 {
     if(key && (g_bytes_get_size(key) != crypto_scalarmult_SCALARBYTES))
     {
-        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid key size");
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, _("Invalid key size"));
         return NULL;
     }
 
@@ -432,7 +433,10 @@ gboolean dht_client_bootstrap(DhtClient *client, const gchar *host, guint16 port
     // Resolve host
     g_autoptr(GSocketAddress) sockaddr = NULL;
     g_autoptr(GResolver) resolver = g_resolver_get_default();
-    GList *item, *list = g_resolver_lookup_by_name(resolver, host, NULL, error);
+    GList *list = g_resolver_lookup_by_name(resolver, host, NULL, error);
+    if(!list) return FALSE;
+
+    GList *item;
     for(item = list; item; item = item->next)
     {
         // Filter out correct address family
@@ -443,7 +447,6 @@ gboolean dht_client_bootstrap(DhtClient *client, const gchar *host, guint16 port
             break;
         }
     }
-
     g_resolver_free_addresses(list);
 
     if(sockaddr)
@@ -477,7 +480,7 @@ gboolean dht_client_bootstrap(DhtClient *client, const gchar *host, guint16 port
         return FALSE;
     }
 
-    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE, "Unknown host");
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE, _("Unknown host"));
     return FALSE;
 }
 
@@ -491,14 +494,14 @@ gboolean dht_client_lookup(DhtClient *client, const gchar *id_base64, GError **e
     g_autofree gpointer id = g_base64_decode(id_base64, &idlen);
     if(idlen != DHT_HASH_SIZE)
     {
-        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid ID format");
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, _("Invalid ID format"));
         return FALSE;
     }
 
     if(memcmp(id, priv->id, DHT_HASH_SIZE) == 0)
     {
         // Fail if using own ID
-        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CONNECTION_REFUSED, "Connection refused");
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CONNECTION_REFUSED, _("Connection refused"));
         return FALSE;
     }
 
@@ -1235,7 +1238,7 @@ static gboolean dht_lookup_dispatch(DhtLookup *lookup, GError **error)
             return TRUE;
         }
 
-        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_HOST_NOT_FOUND, "DHT lookup failed");
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_HOST_NOT_FOUND, _("DHT lookup failed"));
         g_hash_table_remove(priv->lookup_table, lookup->id);
         return FALSE;
     }
@@ -1257,7 +1260,7 @@ static gboolean dht_lookup_timeout(gpointer arg)
 
         // Signal bootstrap error
         g_autofree gchar *id_base64 = g_base64_encode(priv->id, DHT_HASH_SIZE);
-        g_autoptr(GError) error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_TIMED_OUT, "Bootstrap timed out");
+        g_autoptr(GError) error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_TIMED_OUT, _("Bootstrap timed out"));
         g_signal_emit(client, dht_client_signals[SIGNAL_ON_ERROR], 0, id_base64, error);
     }
 
@@ -1280,7 +1283,7 @@ static gboolean dht_connection_timeout(gpointer arg)
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
 
     g_autofree gchar *id_base64 = g_base64_encode(connection->id, DHT_HASH_SIZE);
-    g_autoptr(GError) error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_TIMED_OUT, "Connection timed out");
+    g_autoptr(GError) error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_TIMED_OUT, _("Connection timed out"));
     g_signal_emit(client, dht_client_signals[SIGNAL_ON_ERROR], 0, id_base64, error);
 
     g_hash_table_remove(priv->connection_table, connection->nonce);

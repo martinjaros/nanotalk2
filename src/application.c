@@ -21,6 +21,7 @@
 #include <string.h>
 #include <gtk/gtk.h>
 #include <gst/gst.h>
+#include <glib/gi18n.h>
 #include "application.h"
 #include "gstrtpencrypt.h"
 #include "gstrtpdecrypt.h"
@@ -169,7 +170,7 @@ static gboolean dialog_run(Application *app)
     // Show dialog
     app->dialog = gtk_message_dialog_new(GTK_WINDOW(app->window),
         GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT, GTK_MESSAGE_QUESTION, GTK_BUTTONS_YES_NO,
-        "Incoming call from %s\nAnswer?", gtk_entry_get_text(GTK_ENTRY(app->entry)));
+        _("Incoming call from %s\nAnswer?"), gtk_entry_get_text(GTK_ENTRY(app->entry)));
 
     gint response = gtk_dialog_run(GTK_DIALOG(app->dialog));
     gtk_widget_destroy(app->dialog);
@@ -344,7 +345,7 @@ gboolean application_init(GError **error)
     if(!gst_registry_check_feature_version(registry, "playbin", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO) ||
        !gst_registry_check_feature_version(registry, "volume", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO))
     {
-        g_set_error_literal(error, GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, "Missing GStreamer Base Plugins");
+        g_set_error_literal(error, GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, _("Missing GStreamer Base Plugins"));
         return FALSE;
     }
 
@@ -354,7 +355,7 @@ gboolean application_init(GError **error)
        !gst_registry_check_feature_version(registry, "autoaudiosink", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO) ||
        !gst_registry_check_feature_version(registry, "rtpjitterbuffer", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO))
     {
-        g_set_error_literal(error, GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, "Missing GStreamer Good Plugins");
+        g_set_error_literal(error, GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, _("Missing GStreamer Good Plugins"));
         return FALSE;
     }
 
@@ -363,14 +364,14 @@ gboolean application_init(GError **error)
        !gst_registry_check_feature_version(registry, "opusenc", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO) ||
        !gst_registry_check_feature_version(registry, "rtpopuspay", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO))
     {
-        g_set_error_literal(error, GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, "Missing Opus plugin for GStreamer");
+        g_set_error_literal(error, GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, _("Missing Opus plugin for GStreamer"));
         return FALSE;
     }
 
-    if(!gst_plugin_register_static(GST_VERSION_MAJOR, GST_VERSION_MINOR, "rtpcrypto", "RTP encryption/decryption",
+    if(!gst_plugin_register_static(GST_VERSION_MAJOR, GST_VERSION_MINOR, "rtpcrypto", _("RTP encryption/decryption"),
             plugin_init, PACKAGE_VERSION, "GPL", PACKAGE_TARNAME, PACKAGE_NAME, PACKAGE_URL))
     {
-        g_set_error_literal(error, GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, "Cannot register GStreamer plugin");
+        g_set_error_literal(error, GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, _("Cannot register GStreamer plugin"));
         return FALSE;
     }
 
@@ -459,7 +460,7 @@ Application* application_new(DhtClient *client, const gchar *aliases_path, const
     GtkWidget *menu_item = gtk_menu_item_new();
     g_signal_connect(menu_item, "activate", (GCallback)show_about, app);
     GtkWidget *menu_icon = gtk_image_new_from_icon_name("help-about", GTK_ICON_SIZE_MENU);
-    GtkWidget *menu_label = gtk_label_new("About");
+    GtkWidget *menu_label = gtk_label_new(_("About"));
     GtkWidget *menu_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_container_add(GTK_CONTAINER(menu_box), menu_icon);
     gtk_container_add(GTK_CONTAINER(menu_box), menu_label);
@@ -469,7 +470,7 @@ Application* application_new(DhtClient *client, const gchar *aliases_path, const
     menu_item = gtk_menu_item_new();
     g_signal_connect(menu_item, "activate", (GCallback)gtk_main_quit, NULL);
     menu_icon = gtk_image_new_from_icon_name("application-exit", GTK_ICON_SIZE_MENU);
-    menu_label = gtk_label_new("Quit");
+    menu_label = gtk_label_new(_("Quit"));
     menu_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_container_add(GTK_CONTAINER(menu_box), menu_icon);
     gtk_container_add(GTK_CONTAINER(menu_box), menu_label);

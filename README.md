@@ -41,10 +41,10 @@ You may create a text file with list of aliases for IDs you know. For example
 
 In order to use the client it must be bootstrapped to a live node specified either by hostname or address
 
-    nanotalk -k /path/to/private.key -a /path/to/aliases.txt -h 10.20.30.40 -p 5004
+    nanotalk -k /path/to/private.key -a /path/to/aliases.txt -h 192.168.0.1
 
 To make the client work behind NAT you need to either enable "full-cone" if the router supports it
-or setup port forwarding for UDP port 5004.
+or setup UDP port forwarding. The default port is **5004**.
 
 The client can play a sound file to indicate an incoming call; use the `--call-sound` option.  
 For more options see `nanotalk --help`

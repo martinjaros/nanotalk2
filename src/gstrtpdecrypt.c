@@ -16,6 +16,7 @@
 
 #include <string.h>
 #include <sodium.h>
+#include <glib/gi18n.h>
 #include <gst/rtp/rtp.h>
 #include "gstrtpdecrypt.h"
 
@@ -48,13 +49,13 @@ static void gst_rtp_decrypt_class_init(GstRtpDecryptClass *klass)
     object_class->finalize = gst_rtp_decrypt_finalize;
 
     g_object_class_install_property(object_class, PROP_KEY,
-        g_param_spec_boxed("key", "Key", "Decryption key", G_TYPE_BYTES, G_PARAM_READWRITE));
+        g_param_spec_boxed("key", _("Key"), _("Decryption key"), G_TYPE_BYTES, G_PARAM_READWRITE));
 
     GstElementClass *element_class = (GstElementClass*)klass;
     gst_element_class_add_pad_template(element_class, gst_static_pad_template_get(&src_template));
     gst_element_class_add_pad_template(element_class, gst_static_pad_template_get(&sink_template));
     gst_element_class_set_details_simple(element_class,
-        "RTP Decrypt", "Filter/Network/RTP", "Decrypts RTP packets", "Martin Jaros <xjaros32@stud.feec.vutbr.cz>");
+        "RTP Decrypt", "Filter/Network/RTP", _("Decrypts RTP packets"), "Martin Jaros <xjaros32@stud.feec.vutbr.cz>");
 
     GST_DEBUG_CATEGORY_INIT(gst_rtp_decrypt_debug, "rtpdecrypt", 0, "RTP Decrypt");
 }
@@ -111,8 +112,8 @@ static GstFlowReturn gst_rtp_decrypt_chain(GstPad *pad, GstObject *parent, GstBu
     gconstpointer key = decrypt->key ? g_bytes_get_data(decrypt->key, &key_len) : NULL;
     if(key_len != crypto_aead_chacha20poly1305_KEYBYTES)
     {
-        GST_ELEMENT_ERROR(decrypt, RESOURCE, SETTINGS, ("Invalid key."),
-            ("expected key size of %u bytes, but got %zu bytes", crypto_aead_chacha20poly1305_KEYBYTES, key_len));
+        GST_ELEMENT_ERROR(decrypt, RESOURCE, SETTINGS, (_("Invalid key.")),
+            (_("expected key size of %u bytes, but got %zu bytes"), crypto_aead_chacha20poly1305_KEYBYTES, key_len));
 
         gst_buffer_unref(inbuf);
         return GST_FLOW_ERROR;

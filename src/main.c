@@ -21,6 +21,8 @@
 static Application *application = NULL;
 #endif /* ENABLE_GUI */
 
+#include <glib/gi18n.h>
+#include <locale.h>
 #include "dhtclient.h"
 
 #define DEFAULT_PORT 5004
@@ -48,12 +50,11 @@ static gboolean print_stats(DhtClient *client)
     g_autofree gchar *last_seen_str = g_date_time_format(last_seen, "%c");
     g_autofree gchar *bytes_received_str = g_format_size(bytes_received);
     g_autofree gchar *bytes_sent_str = g_format_size(bytes_sent);
-    g_print("\n"
-            "Peers:     %u\n"
-            "Last seen: %s\n"
-            "Received:  %s (%lu packets)\n"
-            "Sent:      %s (%lu packets)\n",
-            peers, last_seen_str, bytes_received_str, packets_received, bytes_sent_str, packets_sent);
+    g_print("\n%s: %u\n%s: %s\n%s: %s (%lu %s)\n%s: %s (%lu %s)\n",
+            _("Peers"), peers,
+            _("Last seen"), last_seen_str,
+            _("Received"), bytes_received_str, packets_received, _("packets"),
+            _("Sent"), bytes_sent_str, packets_sent, _("packets"));
 
     return G_SOURCE_CONTINUE;
 }
@@ -77,23 +78,28 @@ static gboolean startup(int *argc, char ***argv, GError **error)
 
     GOptionEntry options[] =
     {
-        { "ipv6", '6', 0, G_OPTION_ARG_NONE, &ipv6, "Enable IPv6", NULL },
-        { "key", 'k', 0, G_OPTION_ARG_FILENAME, &key_path, "Private key", "FILE" },
-        { "local-port", 'l', 0, G_OPTION_ARG_INT, &local_port, "Source port (default " G_STRINGIFY(DEFAULT_PORT) ")", "NUM" },
-        { "bootstrap-host", 'h', 0, G_OPTION_ARG_STRING, &bootstrap_host, "Bootstrap address", "ADDR" },
-        { "bootstrap-port", 'p', 0, G_OPTION_ARG_INT, &bootstrap_port, "Bootstrap port", "NUM" },
+        { "ipv6", '6', 0, G_OPTION_ARG_NONE, &ipv6, N_("Enable IPv6"), NULL },
+        { "key", 'k', 0, G_OPTION_ARG_FILENAME, &key_path, N_("Private key"), "FILE" },
+        { "local-port", 'l', 0, G_OPTION_ARG_INT, &local_port, N_("Source port"), "NUM" },
+        { "bootstrap-host", 'h', 0, G_OPTION_ARG_STRING, &bootstrap_host, N_("Bootstrap address"), "ADDR" },
+        { "bootstrap-port", 'p', 0, G_OPTION_ARG_INT, &bootstrap_port, N_("Bootstrap port"), "NUM" },
 
 #if ENABLE_GUI
-        { "aliases", 'a', 0, G_OPTION_ARG_FILENAME, &aliases_path, "List of aliases", "FILE" },
-        { "call-sound", 's', 0, G_OPTION_ARG_STRING, &sound_file, "Incoming call sound", "FILE" },
+        { "aliases", 'a', 0, G_OPTION_ARG_FILENAME, &aliases_path, N_("List of aliases"), "FILE" },
+        { "call-sound", 's', 0, G_OPTION_ARG_STRING, &sound_file, N_("Incoming call sound"), "FILE" },
 #endif /* ENABLE_GUI */
 
-        { "version", 'V', 0, G_OPTION_ARG_NONE, &version, "Print program version", NULL },
+        { "version", 'V', 0, G_OPTION_ARG_NONE, &version, N_("Print program version"), NULL },
         { NULL }
     };
 
+    setlocale(LC_ALL, "");
+    bindtextdomain(PACKAGE_TARNAME, DATADIR "/locale");
+    bind_textdomain_codeset(PACKAGE_TARNAME, "UTF-8");
+    textdomain(PACKAGE_TARNAME);
+
     g_autoptr(GOptionContext) context = g_option_context_new(NULL);
-    g_option_context_add_main_entries(context, options, NULL);
+    g_option_context_add_main_entries(context, options, PACKAGE_TARNAME);
     g_option_context_set_summary(context, PACKAGE_STRING);
     g_option_context_set_description(context, PACKAGE_BUGREPORT "\n" PACKAGE_URL);
 
@@ -139,7 +145,7 @@ static gboolean startup(int *argc, char ***argv, GError **error)
 
     g_autofree gchar *id = NULL;
     g_object_get(client, "id", &id, NULL);
-    g_print("Client ID %s\n", id);
+    g_print(_("Client ID %s\n"), id);
 
 #ifdef G_OS_UNIX
     g_unix_signal_add(SIGUSR1, (GSourceFunc)print_stats, client);
