@@ -1,0 +1,8 @@
+DOMAIN = $(PACKAGE)
+
+subdir = po
+top_builddir = ..
+
+XGETTEXT_OPTIONS = \
+  --keyword=_ --flag=_:1:pass-c-format \
+  --keyword=N_ --flag=N_:1:pass-c-format

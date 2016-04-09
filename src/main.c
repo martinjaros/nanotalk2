@@ -16,7 +16,7 @@
 #include <config.h>
 #endif /* HAVE_CONFIG_H */
 
-#if ENABLE_GUI
+#ifdef ENABLE_GUI
 #include "application.h"
 static Application *application = NULL;
 #endif /* ENABLE_GUI */
@@ -71,7 +71,7 @@ static gboolean startup(int *argc, char ***argv, GError **error)
     gboolean ipv6 = FALSE;
     gboolean version = FALSE;
 
-#if ENABLE_GUI
+#ifdef ENABLE_GUI
     g_autofree gchar *aliases_path = NULL;
     g_autofree gchar *sound_file = NULL;
 #endif /* ENABLE_GUI */
@@ -84,7 +84,7 @@ static gboolean startup(int *argc, char ***argv, GError **error)
         { "bootstrap-host", 'h', 0, G_OPTION_ARG_STRING, &bootstrap_host, N_("Bootstrap address"), "ADDR" },
         { "bootstrap-port", 'p', 0, G_OPTION_ARG_INT, &bootstrap_port, N_("Bootstrap port"), "NUM" },
 
-#if ENABLE_GUI
+#ifdef ENABLE_GUI
         { "aliases", 'a', 0, G_OPTION_ARG_FILENAME, &aliases_path, N_("List of aliases"), "FILE" },
         { "call-sound", 's', 0, G_OPTION_ARG_STRING, &sound_file, N_("Incoming call sound"), "FILE" },
 #endif /* ENABLE_GUI */
@@ -93,17 +93,19 @@ static gboolean startup(int *argc, char ***argv, GError **error)
         { NULL }
     };
 
+#ifdef ENABLE_NLS
     setlocale(LC_ALL, "");
-    bindtextdomain(PACKAGE_TARNAME, DATADIR "/locale");
+    bindtextdomain(PACKAGE_TARNAME, LOCALEDIR);
     bind_textdomain_codeset(PACKAGE_TARNAME, "UTF-8");
     textdomain(PACKAGE_TARNAME);
+#endif /* ENABLE_NLS */
 
     g_autoptr(GOptionContext) context = g_option_context_new(NULL);
     g_option_context_add_main_entries(context, options, PACKAGE_TARNAME);
     g_option_context_set_summary(context, PACKAGE_STRING);
     g_option_context_set_description(context, PACKAGE_BUGREPORT "\n" PACKAGE_URL);
 
-#if ENABLE_GUI
+#ifdef ENABLE_GUI
     application_add_option_group(context);
 #endif /* ENABLE_GUI */
 
@@ -117,7 +119,7 @@ static gboolean startup(int *argc, char ***argv, GError **error)
         exit(EXIT_SUCCESS);
     }
 
-#if ENABLE_GUI
+#ifdef ENABLE_GUI
     if(!application_init(error))
         return FALSE;
 #endif /* ENABLE_GUI */
@@ -151,7 +153,7 @@ static gboolean startup(int *argc, char ***argv, GError **error)
     g_unix_signal_add(SIGUSR1, (GSourceFunc)print_stats, client);
 #endif /* G_OS_UNIX */
 
-#if ENABLE_GUI
+#ifdef ENABLE_GUI
     application = application_new(client, aliases_path, sound_file);
     g_object_unref(client);
 #endif /* ENABLE_GUI */
@@ -168,7 +170,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-#if ENABLE_GUI
+#ifdef ENABLE_GUI
     application_run();
     application_free(application);
 #else

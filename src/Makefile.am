@@ -1,4 +1,5 @@
-DEFS += -DDATADIR=\"$(datadir)\"
+DEFS += -DLOCALEDIR=\"$(localedir)\"
+LDFLAGS += $(LTLIBINTL)
 CFLAGS += $(SODIUM_CFLAGS) $(GLIB_CFLAGS)
 LDADD = $(SODIUM_LIBS) $(GLIB_LIBS)
 
