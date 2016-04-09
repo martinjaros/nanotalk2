@@ -1,12 +1,10 @@
 AC_INIT([Nanotalk distributed multimedia service], [2.0.1],
 [xjaros32@stud.feec.vutbr.cz], [nanotalk], [https://github.com/martinjaros/nanotalk2])
 
-AM_INIT_AUTOMAKE([foreign no-define])
-AM_SILENT_RULES([yes])
-
+AM_INIT_AUTOMAKE
 AC_PROG_CC([gcc])
 AM_GNU_GETTEXT([external])
-AM_GNU_GETTEXT_VERSION([0.18])
+AM_GNU_GETTEXT_VERSION([0.18.3])
 
 AC_ARG_ENABLE([gui], AS_HELP_STRING([--disable-gui], [build without GUI]))
 AM_CONDITIONAL(ENABLE_GUI, [test "x$enable_gui" != "xno"])

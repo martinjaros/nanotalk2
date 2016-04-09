@@ -95,13 +95,13 @@ static gboolean startup(int *argc, char ***argv, GError **error)
 
 #ifdef ENABLE_NLS
     setlocale(LC_ALL, "");
-    bindtextdomain(PACKAGE_TARNAME, LOCALEDIR);
-    bind_textdomain_codeset(PACKAGE_TARNAME, "UTF-8");
-    textdomain(PACKAGE_TARNAME);
+    bindtextdomain(PACKAGE, LOCALEDIR);
+    bind_textdomain_codeset(PACKAGE, "UTF-8");
+    textdomain(PACKAGE);
 #endif /* ENABLE_NLS */
 
     g_autoptr(GOptionContext) context = g_option_context_new(NULL);
-    g_option_context_add_main_entries(context, options, PACKAGE_TARNAME);
+    g_option_context_add_main_entries(context, options, PACKAGE);
     g_option_context_set_summary(context, PACKAGE_STRING);
     g_option_context_set_description(context, PACKAGE_BUGREPORT "\n" PACKAGE_URL);
 
@@ -115,7 +115,7 @@ static gboolean startup(int *argc, char ***argv, GError **error)
     if(version)
     {
         // Print program version
-        g_print(PACKAGE_TARNAME " " PACKAGE_VERSION "\n");
+        g_print(PACKAGE " " VERSION "\n");
         exit(EXIT_SUCCESS);
     }
 

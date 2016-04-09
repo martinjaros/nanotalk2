@@ -1,4 +1,6 @@
-# Nanotalk distributed multimedia service
+Nanotalk distributed multimedia service
+=======================================
+
 This is a simple, distributed voice client for Linux desktop.
 It can be used for simple calls between nodes;
 the peer node is specified by its ID (or an alias you assigned to this ID).
@@ -9,7 +11,9 @@ I made this project out of pure interest in the topic mostly for demonstration p
 If you actually want to use it practically there is a need for better GUI and more features,
 but feel free to use this project or its parts for your own application.
 
-## Build and install
+Build and install
+---------------------------------------
+
 If building from git, you must first initialize the build system with `autoreconf -i`.
 
     ./configure
@@ -27,7 +31,9 @@ Dependencies:
 
 If you want to build a server without GTK+ and GStreamer use `./confifure --disable-gui`.
 
-## Running
+Running
+---------------------------------------
+
 First, you need a private key, which is a 32-byte random sequence
 
     dd if=/dev/random of=/path/to/private.key bs=32 count=1 iflag=fullblock
@@ -46,9 +52,5 @@ In order to use the client it must be bootstrapped to a live node specified eith
 To make the client work behind NAT you need to either enable "full-cone" if the router supports it
 or setup UDP port forwarding. The default port is **5004**.
 
-The client can play a sound file to indicate an incoming call; use the `--call-sound` option.  
-For more options see `nanotalk --help`
-
-## License
-Use with GNU General Public License, version 2  
-(or ask me for relicensing)
+The client can play a sound file to indicate an incoming call; use the `--call-sound` option.
+For more options see `nanotalk --help`.
