@@ -168,9 +168,9 @@ static gboolean dialog_run(Application *app)
     }
 
     // Show dialog
-    app->dialog = gtk_message_dialog_new(GTK_WINDOW(app->window),
+    app->dialog = gtk_message_dialog_new_with_markup(GTK_WINDOW(app->window),
         GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT, GTK_MESSAGE_QUESTION, GTK_BUTTONS_YES_NO,
-        _("Incoming call from %s\nAnswer?"), gtk_entry_get_text(GTK_ENTRY(app->entry)));
+        _("Answer an incoming call from <b>%s</b> ?"), gtk_entry_get_text(GTK_ENTRY(app->entry)));
 
     gint response = gtk_dialog_run(GTK_DIALOG(app->dialog));
     gtk_widget_destroy(app->dialog);
@@ -368,7 +368,7 @@ gboolean application_init(GError **error)
         return FALSE;
     }
 
-    if(!gst_plugin_register_static(GST_VERSION_MAJOR, GST_VERSION_MINOR, "rtpcrypto", _("RTP encryption/decryption"),
+    if(!gst_plugin_register_static(GST_VERSION_MAJOR, GST_VERSION_MINOR, "rtpcrypto", "RTP encryption/decryption",
             plugin_init, PACKAGE_VERSION, "GPL", PACKAGE_TARNAME, PACKAGE_NAME, PACKAGE_URL))
     {
         g_set_error_literal(error, GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, _("Cannot register GStreamer plugin"));

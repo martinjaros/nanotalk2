@@ -53,8 +53,8 @@ static gboolean print_stats(DhtClient *client)
     g_print("\n%s: %u\n%s: %s\n%s: %s (%lu %s)\n%s: %s (%lu %s)\n",
             _("Peers"), peers,
             _("Last seen"), last_seen_str,
-            _("Received"), bytes_received_str, packets_received, _("packets"),
-            _("Sent"), bytes_sent_str, packets_sent, _("packets"));
+            _("Received"), bytes_received_str, packets_received, ngettext("packet", "packets", packets_received),
+            _("Sent"), bytes_sent_str, packets_sent, ngettext("packet", "packets", packets_sent));
 
     return G_SOURCE_CONTINUE;
 }

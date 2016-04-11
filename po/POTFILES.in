@@ -1,5 +1,3 @@
 src/main.c
 src/application.c
 src/dhtclient.c
-src/gstrtpencrypt.c
-src/gstrtpdecrypt.c
