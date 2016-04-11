@@ -358,14 +358,16 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * DhtClient::accept-connection:
      * @client: Object instance that emitted the signal
      * @id: ID of the remote peer (20 bytes, Base64 encoded)
+     * @sockaddr: Remote peer address
+     * @remote: %TRUE if the connection was initiated by the remote peer
      *
-     * A signal emitted when a remote peer requests a connection.
+     * A signal emitted when a new connection is about to be created, see dht_client_lookup().
      *
-     * Returns: %TRUE if the connection should be accepted
+     * Returns: (transfer full): Socket allocated for this connection or %NULL to reject the connection
      */
     dht_client_signals[SIGNAL_ACCEPT_CONNECTION] = g_signal_new("accept-connection",
              G_TYPE_FROM_CLASS(client_class), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(DhtClientClass, accept_connection),
-             NULL, NULL, NULL, G_TYPE_BOOLEAN, 1, G_TYPE_STRING);
+             NULL, NULL, NULL, G_TYPE_SOCKET, 3, G_TYPE_STRING, G_TYPE_SOCKET_ADDRESS, G_TYPE_BOOLEAN);
 
     /**
      * DhtClient::new-connection:
@@ -378,6 +380,8 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * @remote: %TRUE if the connection was initiated by the remote peer
      *
      * A signal emitted after establishing a new connection, see dht_client_lookup().
+     * Note that the value of @sockaddr differs from #DhtClient::accept-connection;
+     * this signal uses the address of the newly allocated peer socket.
      */
     dht_client_signals[SIGNAL_NEW_CONNECTION] = g_signal_new("new-connection",
             G_TYPE_FROM_CLASS(client_class), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(DhtClientClass, new_connection),
@@ -850,26 +854,33 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
                 g_debug("received connection request");
                 dht_client_update(client, msg->srcid, TRUE, addr, port);
 
-                gboolean accept = FALSE;
+                GSocket *socket = NULL;
                 g_autofree gchar *id_base64 = g_base64_encode(msg->srcid, DHT_HASH_SIZE);
-                g_signal_emit(client, dht_client_signals[SIGNAL_ACCEPT_CONNECTION], 0, id_base64, &accept);
-                if(accept)
+                g_signal_emit(client, dht_client_signals[SIGNAL_ACCEPT_CONNECTION], 0, id_base64, sockaddr, TRUE, &socket);
+                if(socket)
                 {
-                    DhtConnection *connection = g_new0(DhtConnection, 1);
-                    randombytes_buf(connection->nonce, DHT_NONCE_SIZE);
-                    memcpy(connection->id, msg->srcid, DHT_HASH_SIZE);
-                    connection->parent = client;
-
                     MsgConnectionResponse response;
                     response.type = MSG_CONNECTION_RES;
+                    randombytes_buf(response.nonce, DHT_NONCE_SIZE);
                     memcpy(response.pk, priv->pk, crypto_scalarmult_BYTES);
-                    memcpy(response.nonce, connection->nonce, DHT_NONCE_SIZE);
                     memcpy(response.peer_nonce, msg->nonce, DHT_NONCE_SIZE);
 
                     // Send response
-                    connection->socket = g_socket_new(priv->family, G_SOCKET_TYPE_DATAGRAM, G_SOCKET_PROTOCOL_UDP, NULL);
-                    g_socket_send_to(connection->socket, sockaddr, (gchar*)&response, sizeof(response), NULL, NULL);
+                    g_autoptr(GError) error = NULL;
+                    if(g_socket_send_to(socket, sockaddr, (gchar*)&response, sizeof(response), NULL, &error) < 0)
+                    {
+                        // Signal error
+                        g_object_unref(socket);
+                        g_signal_emit(client, dht_client_signals[SIGNAL_ON_ERROR], 0, id_base64, error);
+                        break;
+                    }
 
+                    // Create connection
+                    DhtConnection *connection = g_new0(DhtConnection, 1);
+                    memcpy(connection->nonce, response.nonce, DHT_NONCE_SIZE);
+                    memcpy(connection->id, msg->srcid, DHT_HASH_SIZE);
+                    connection->parent = client;
+                    connection->socket = socket;
                     connection->timeout_source = g_timeout_add(DHT_TIMEOUT_MS, dht_connection_timeout, connection);
                     g_hash_table_insert(priv->connection_table, connection->nonce, connection);
                 }
@@ -891,9 +902,10 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
 
                 guint8 secret[crypto_scalarmult_BYTES];
                 if(crypto_scalarmult(secret, priv->sk, msg->pk) != 0) break;
-                g_debug("received connection response");
 
-                gboolean is_remote = connection->socket ? TRUE : FALSE;
+                g_debug("received connection response");
+                g_autofree gchar *id_base64 = g_base64_encode(connection->id, DHT_HASH_SIZE);
+                gboolean is_remote = connection->sockaddr ? FALSE : TRUE;
                 if(!is_remote)
                 {
                     MsgConnectionResponse response;
@@ -903,8 +915,15 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
                     memcpy(response.peer_nonce, msg->nonce, DHT_NONCE_SIZE);
 
                     // Send response
-                    connection->socket = g_socket_new(priv->family, G_SOCKET_TYPE_DATAGRAM, G_SOCKET_PROTOCOL_UDP, NULL);
-                    g_socket_send_to(connection->socket, connection->sockaddr, (gchar*)&response, sizeof(response), NULL, NULL);
+                    g_autoptr(GError) error = NULL;
+                    if(g_socket_send_to(connection->socket, connection->sockaddr, (gchar*)&response, sizeof(response), NULL, &error) < 0)
+                    {
+                        // Signal error
+                        g_object_unref(socket);
+                        g_signal_emit(client, dht_client_signals[SIGNAL_ON_ERROR], 0, id_base64, error);
+                        g_hash_table_remove(priv->connection_table, connection->nonce);
+                        break;
+                    }
                 }
 
                 // Derive keys
@@ -914,7 +933,6 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
 
                 g_autoptr(GBytes) enc_key_bytes = g_bytes_new(enc_key, sizeof(enc_key));
                 g_autoptr(GBytes) dec_key_bytes = g_bytes_new(dec_key, sizeof(dec_key));
-                g_autofree gchar *id_base64 = g_base64_encode(connection->id, DHT_HASH_SIZE);
                 g_signal_emit(client, dht_client_signals[SIGNAL_NEW_CONNECTION], 0,
                         id_base64, connection->socket, sockaddr, enc_key_bytes, dec_key_bytes, is_remote);
 
@@ -1128,32 +1146,38 @@ static gboolean dht_lookup_update(DhtLookup *lookup, gconstpointer node_ptr, gsi
         // Check if this is the target node
         if(memcmp(node->id, lookup->id, DHT_HASH_SIZE) == 0)
         {
-            // Create connections
+            g_autofree gchar *id_base64 = g_base64_encode(lookup->id, DHT_HASH_SIZE);
             while(lookup->num_connections--)
             {
-                DhtConnection *connection = g_new0(DhtConnection, 1);
-                memcpy(connection->id, lookup->id, DHT_HASH_SIZE);
-                randombytes_buf(connection->nonce, DHT_NONCE_SIZE);
-                connection->parent = client;
-
-                // Send request
-                MsgConnectionRequest request;
-                request.type = MSG_CONNECTION_REQ;
-                memcpy(request.srcid, priv->id, DHT_HASH_SIZE);
-                memcpy(request.nonce, connection->nonce, DHT_NONCE_SIZE);
-                g_debug("sending connection request");
-
                 g_autoptr(GInetAddress) in_addr = g_inet_address_new_from_bytes(node->addr, priv->family);
-                connection->sockaddr = g_inet_socket_address_new(in_addr, GUINT16_FROM_BE(node->port));
-                gssize res = g_socket_send_to(priv->socket, connection->sockaddr, (gchar*)&request, sizeof(request), NULL, NULL);
-                if(res >= 0)
-                {
-                    priv->packets_sent++;
-                    priv->bytes_sent += res;
-                }
+                g_autoptr(GSocketAddress) sockaddr = g_inet_socket_address_new(in_addr, GUINT16_FROM_BE(node->port));
 
-                connection->timeout_source = g_timeout_add(DHT_TIMEOUT_MS, dht_connection_timeout, connection);
-                g_hash_table_insert(priv->connection_table, connection->nonce, connection);
+                GSocket *socket = NULL;
+                g_signal_emit(client, dht_client_signals[SIGNAL_ACCEPT_CONNECTION], 0, id_base64, sockaddr, FALSE, &socket);
+                if(socket)
+                {
+                    // Send request
+                    MsgConnectionRequest request;
+                    request.type = MSG_CONNECTION_REQ;
+                    memcpy(request.srcid, priv->id, DHT_HASH_SIZE);
+                    randombytes_buf(request.nonce, DHT_NONCE_SIZE);
+                    gssize res = g_socket_send_to(priv->socket, sockaddr, (gchar*)&request, sizeof(request), NULL, NULL);
+                    if(res >= 0)
+                    {
+                        priv->packets_sent++;
+                        priv->bytes_sent += res;
+                    }
+
+                    // Create connection
+                    DhtConnection *connection = g_new0(DhtConnection, 1);
+                    memcpy(connection->id, lookup->id, DHT_HASH_SIZE);
+                    memcpy(connection->nonce, request.nonce, DHT_NONCE_SIZE);
+                    connection->parent = client;
+                    connection->socket = socket;
+                    connection->sockaddr = g_object_ref(sockaddr);
+                    connection->timeout_source = g_timeout_add(DHT_TIMEOUT_MS, dht_connection_timeout, connection);
+                    g_hash_table_insert(priv->connection_table, connection->nonce, connection);
+                }
             }
 
             // Destroy lookup

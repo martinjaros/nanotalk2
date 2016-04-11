@@ -33,6 +33,8 @@ struct _application
     GtkWidget *window, *entry, *button_start, *button_stop, *menu, *dialog;
     GtkStatusIcon *status_icon;
     GtkListStore *completions;
+
+    GSocketFamily family;
     DhtClient *client;
 
     GstElement *rx_pipeline, *tx_pipeline;
@@ -197,15 +199,16 @@ static gboolean dialog_run(Application *app)
     return G_SOURCE_REMOVE;
 }
 
-static gboolean accept_connection(DhtClient *client, const gchar *id, Application *app)
+static GSocket* accept_connection(DhtClient *client, const gchar *id, GSocketAddress *sockaddr, gboolean remote, Application *app)
 {
-    if(gtk_widget_is_sensitive(app->button_start))
+    gboolean do_accept = !remote;
+    if(remote && gtk_widget_is_sensitive(app->button_start))
     {
         gtk_widget_set_sensitive(app->button_start, FALSE);
-        return TRUE;
+        do_accept = TRUE;
     }
 
-    return FALSE;
+    return do_accept ? g_socket_new(app->family, G_SOCKET_TYPE_DATAGRAM, G_SOCKET_PROTOCOL_UDP, NULL) : NULL;
 }
 
 static void new_connection(DhtClient *client, const gchar *peer_id,
@@ -394,6 +397,10 @@ Application* application_new(DhtClient *client, const gchar *aliases_path, const
     g_signal_connect(app->client, "accept-connection", (GCallback)accept_connection, app);
     g_signal_connect(app->client, "new-connection", (GCallback)new_connection, app);
     g_signal_connect(app->client, "on-error", (GCallback)on_error, app);
+
+    g_autoptr(GSocket) socket = NULL;
+    g_object_get(client, "socket", &socket, NULL);
+    app->family = g_socket_get_family(socket);
 
     app->completions = gtk_list_store_new(2, G_TYPE_STRING, G_TYPE_STRING);
     if(aliases_path)
