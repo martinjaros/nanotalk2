@@ -388,7 +388,7 @@ void application_add_option_group(GOptionContext *context)
     g_option_context_add_group(context, gst_init_get_option_group());
 }
 
-Application* application_new(DhtClient *client, const gchar *aliases_path, const gchar *sound_file)
+Application* application_new(DhtClient *client, gboolean ipv6, const gchar *aliases_path, const gchar *sound_file)
 {
     Application *app = g_new0(Application, 1);
     app->sound_file = g_strdup(sound_file);
@@ -397,10 +397,7 @@ Application* application_new(DhtClient *client, const gchar *aliases_path, const
     g_signal_connect(app->client, "accept-connection", (GCallback)accept_connection, app);
     g_signal_connect(app->client, "new-connection", (GCallback)new_connection, app);
     g_signal_connect(app->client, "on-error", (GCallback)on_error, app);
-
-    g_autoptr(GSocket) socket = NULL;
-    g_object_get(client, "socket", &socket, NULL);
-    app->family = g_socket_get_family(socket);
+    app->family = ipv6 ? G_SOCKET_FAMILY_IPV6 : G_SOCKET_FAMILY_IPV4;
 
     app->completions = gtk_list_store_new(2, G_TYPE_STRING, G_TYPE_STRING);
     if(aliases_path)

@@ -22,7 +22,7 @@ typedef struct _application Application;
 void application_add_option_group(GOptionContext *context);
 gboolean application_init(GError **error);
 
-Application* application_new(DhtClient *client, const gchar *aliases_path, const gchar *sound_file);
+Application* application_new(DhtClient *client, gboolean ipv6, const gchar *aliases_path, const gchar *sound_file);
 void application_free(Application *app);
 
 void application_run();

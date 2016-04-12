@@ -29,15 +29,22 @@
 #define DHT_REFRESH_MS  60000 // refresh period (1 minute)
 #define DHT_LINGER_MS 3600000 // dead node linger (1 hour)
 
-/* Message codes */
-#define MSG_LOOKUP_REQ     0xC0
-#define MSG_LOOKUP_RES     0xC1
-#define MSG_CONNECTION_REQ 0xC2
-#define MSG_CONNECTION_RES 0xC3
+#define MSG_MTU 1500
 
-#define MSG_BUFFER_SIZE 1500
+#define MSG_TYPE_MASK 0xF0
+#define MSG_TYPE(family) (family == G_SOCKET_FAMILY_IPV4 ? 0xC0 : 0xD0)
+
 #define ADDR_SIZE_MAX 16
 #define ADDR_SIZE(family) (family == G_SOCKET_FAMILY_IPV4 ? 4 : ADDR_SIZE_MAX)
+
+/* Message types */
+enum
+{
+    MSG_LOOKUP_REQ,
+    MSG_LOOKUP_RES,
+    MSG_CONNECTION_REQ,
+    MSG_CONNECTION_RES
+};
 
 /* Properties */
 enum
@@ -86,7 +93,7 @@ __attribute__((packed));
 
 struct _msg_lookup
 {
-    guint8 type; // MSG_LOOKUP_REQ, MSG_LOOKUP_RES
+    guint8 type; // MSG_TYPE(family) | MSG_LOOKUP_REQ, MSG_TYPE(family) | MSG_LOOKUP_RES
     guint8 srcid[DHT_HASH_SIZE];
     guint8 dstid[DHT_HASH_SIZE];
     guint8 nodes[0]; // (sizeof(MsgNode) + ADDR_SIZE(family)) * count
@@ -95,7 +102,7 @@ __attribute__((packed));
 
 struct _msg_connection_request
 {
-    guint8 type; // MSG_CONNECTION_REQ
+    guint8 type; // MSG_TYPE(family) | MSG_CONNECTION_REQ
     guint8 srcid[DHT_HASH_SIZE];
     guint8 nonce[DHT_NONCE_SIZE];
 }
@@ -103,7 +110,7 @@ __attribute__((packed));
 
 struct _msg_connection_response
 {
-    guint8 type; // MSG_CONNECTION_RES
+    guint8 type; // MSG_TYPE(family) | MSG_CONNECTION_RES
     guint8 pk[crypto_scalarmult_BYTES];
     guint8 nonce[DHT_NONCE_SIZE];
     guint8 peer_nonce[DHT_NONCE_SIZE];
@@ -470,7 +477,7 @@ gboolean dht_client_bootstrap(DhtClient *client, const gchar *host, guint16 port
 
         // Send request
         MsgLookup msg;
-        msg.type = MSG_LOOKUP_REQ;
+        msg.type = MSG_TYPE(priv->family) | MSG_LOOKUP_REQ;
         memcpy(msg.srcid, priv->id, DHT_HASH_SIZE);
         memcpy(msg.dstid, priv->id, DHT_HASH_SIZE);
         gssize res = g_socket_send_to(priv->socket, sockaddr, (gchar*)&msg, sizeof(msg), NULL, error);
@@ -748,22 +755,32 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
     g_autoptr(GSocketAddress) sockaddr = NULL;
 
-    gchar buffer[MSG_BUFFER_SIZE];
-    gssize len = g_socket_receive_from(socket, &sockaddr, buffer, sizeof(buffer), NULL, NULL);
+    guint8 buffer[MSG_MTU];
+    gssize len = g_socket_receive_from(socket, &sockaddr, (gchar*)buffer, sizeof(buffer), NULL, NULL);
     if(len > 0)
     {
-        GInetAddress *in_addr = g_inet_socket_address_get_address(G_INET_SOCKET_ADDRESS(sockaddr));
-        if(g_inet_address_get_family(in_addr) != priv->family)
-            return G_SOURCE_CONTINUE;
-
-        gconstpointer addr = g_inet_address_to_bytes(in_addr);
-        guint16 port = g_inet_socket_address_get_port(G_INET_SOCKET_ADDRESS(sockaddr));
-        gsize addr_size = ADDR_SIZE(priv->family);
-        gsize node_size = sizeof(MsgNode) + addr_size;
         priv->packets_received++;
         priv->bytes_received += len;
 
-        switch(*(guint8*)buffer)
+        // Check message type mask
+        if((buffer[0] & MSG_TYPE_MASK) != MSG_TYPE(priv->family))
+            return G_SOURCE_CONTINUE;
+
+        GInetAddress *in_addr = g_inet_socket_address_get_address(G_INET_SOCKET_ADDRESS(sockaddr));
+        guint16 port = g_inet_socket_address_get_port(G_INET_SOCKET_ADDRESS(sockaddr));
+        gsize addr_size = ADDR_SIZE(priv->family);
+        gsize node_size = sizeof(MsgNode) + addr_size;
+
+        guint8 addr_buf[] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0, 0, 0, 0 };
+        gconstpointer addr = g_inet_address_to_bytes(in_addr);
+        if((g_inet_address_get_family(in_addr) == G_SOCKET_FAMILY_IPV4) && (priv->family == G_SOCKET_FAMILY_IPV6))
+        {
+            // Translate IPv4 to IPv6
+            memcpy(addr_buf + 12, addr, 4);
+            addr = addr_buf;
+        }
+
+        switch(buffer[0] & ~MSG_TYPE_MASK)
         {
             case MSG_LOOKUP_REQ:
             {
@@ -777,10 +794,10 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
                 dht_client_update(client, msg->srcid, TRUE, addr, port);
 
                 // Send response
-                msg->type = MSG_LOOKUP_RES;
+                msg->type = MSG_TYPE(priv->family) | MSG_LOOKUP_RES;
                 memcpy(msg->srcid, priv->id, DHT_HASH_SIZE);
                 gsize count = dht_client_search(client, msg->dstid, msg->nodes);
-                gssize res = g_socket_send_to(socket, sockaddr, buffer, len + count * node_size, NULL, NULL);
+                gssize res = g_socket_send_to(socket, sockaddr, (gchar*)buffer, len + count * node_size, NULL, NULL);
                 if(res >= 0)
                 {
                     priv->packets_sent++;
@@ -860,7 +877,7 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
                 if(socket)
                 {
                     MsgConnectionResponse response;
-                    response.type = MSG_CONNECTION_RES;
+                    response.type = MSG_TYPE(priv->family) | MSG_CONNECTION_RES;
                     randombytes_buf(response.nonce, DHT_NONCE_SIZE);
                     memcpy(response.pk, priv->pk, crypto_scalarmult_BYTES);
                     memcpy(response.peer_nonce, msg->nonce, DHT_NONCE_SIZE);
@@ -909,7 +926,7 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
                 if(!is_remote)
                 {
                     MsgConnectionResponse response;
-                    response.type = MSG_CONNECTION_RES;
+                    response.type = MSG_TYPE(priv->family) | MSG_CONNECTION_RES;
                     memcpy(response.pk, priv->pk, crypto_scalarmult_BYTES);
                     memcpy(response.nonce, connection->nonce, DHT_NONCE_SIZE);
                     memcpy(response.peer_nonce, msg->nonce, DHT_NONCE_SIZE);
@@ -1158,7 +1175,7 @@ static gboolean dht_lookup_update(DhtLookup *lookup, gconstpointer node_ptr, gsi
                 {
                     // Send request
                     MsgConnectionRequest request;
-                    request.type = MSG_CONNECTION_REQ;
+                    request.type = MSG_TYPE(priv->family) | MSG_CONNECTION_REQ;
                     memcpy(request.srcid, priv->id, DHT_HASH_SIZE);
                     randombytes_buf(request.nonce, DHT_NONCE_SIZE);
                     gssize res = g_socket_send_to(priv->socket, sockaddr, (gchar*)&request, sizeof(request), NULL, NULL);
@@ -1221,7 +1238,7 @@ static gboolean dht_lookup_dispatch(DhtLookup *lookup, gboolean emit_error, GErr
         {
             // Send request
             MsgLookup msg;
-            msg.type = MSG_LOOKUP_REQ;
+            msg.type = MSG_TYPE(priv->family) | MSG_LOOKUP_REQ;
             memcpy(msg.srcid, priv->id, DHT_HASH_SIZE);
             memcpy(msg.dstid, lookup->id, DHT_HASH_SIZE);
 

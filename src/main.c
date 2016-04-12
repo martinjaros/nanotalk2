@@ -154,7 +154,7 @@ static gboolean startup(int *argc, char ***argv, GError **error)
 #endif /* G_OS_UNIX */
 
 #ifdef ENABLE_GUI
-    application = application_new(client, aliases_path, sound_file);
+    application = application_new(client, ipv6, aliases_path, sound_file);
     g_object_unref(client);
 #endif /* ENABLE_GUI */
 
