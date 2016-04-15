@@ -127,7 +127,7 @@ gboolean dht_client_bootstrap(DhtClient *client, const gchar *host, guint16 port
  *
  *   #GIOError.CONNECTION_REFUSED - The connection was rejected
  *
- *   #GIOError.TIMED_OUT - The connection timeout out
+ *   #GIOError.TIMED_OUT - The connection timed out
  *
  * Returns: %TRUE on success
  */

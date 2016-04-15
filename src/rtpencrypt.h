@@ -12,8 +12,8 @@
  * GNU General Public License for more details.
  */
 
-#ifndef __GST_RTP_ENCRYPT_H__
-#define __GST_RTP_ENCRYPT_H__
+#ifndef __RTP_ENCRYPT_H__
+#define __RTP_ENCRYPT_H__
 
 #include <gst/gst.h>
 
@@ -47,4 +47,4 @@ struct _GstRtpEncryptClass
 
 GType gst_rtp_encrypt_get_type(void);
 
-#endif /* __GST_RTP_ENCRYPT_H__ */
+#endif /* __RTP_ENCRYPT_H__ */

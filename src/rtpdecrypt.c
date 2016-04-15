@@ -17,7 +17,7 @@
 #include <string.h>
 #include <sodium.h>
 #include <gst/rtp/rtp.h>
-#include "gstrtpdecrypt.h"
+#include "rtpdecrypt.h"
 
 GST_DEBUG_CATEGORY_STATIC(gst_rtp_decrypt_debug);
 #define GST_CAT_DEFAULT gst_rtp_decrypt_debug

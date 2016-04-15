@@ -30,6 +30,7 @@ PKG_CHECK_MODULES(GLIB, [glib-2.0 >= $GLIB_REQUIRED gio-2.0 >= $GLIB_REQUIRED],
 
 AS_IF([test "x$enable_gui" != "xno"], [
   AC_DEFINE(ENABLE_GUI, 1, [Build GTK+ frontend.])
+  AC_SUBST(LIBM, [-lm])
 
   PKG_CHECK_MODULES(GTK, [gtk+-3.0 >= $GTK_REQUIRED],
   [AC_SUBST(GTK_CFLAGS) AC_SUBST(GTK_LIBS)], [AC_MSG_ERROR([
@@ -38,7 +39,7 @@ AS_IF([test "x$enable_gui" != "xno"], [
         libgtk-3-dev >= $GTK_REQUIRED
   ])])
 
-  PKG_CHECK_MODULES(GST, [gstreamer-1.0 >= $GST_REQUIRED gstreamer-rtp-1.0 >= $GST_REQUIRED],
+  PKG_CHECK_MODULES(GST, [gstreamer-1.0 >= $GST_REQUIRED gstreamer-rtp-1.0 >= $GST_REQUIRED gstreamer-audio-1.0 >= $GST_REQUIRED],
   [AC_SUBST(GST_CFLAGS) AC_SUBST(GST_LIBS)], [AC_MSG_ERROR([
     You need to install or upgrade the GStreamer development packages.
     On debian-based systems these are:

@@ -12,8 +12,8 @@
  * GNU General Public License for more details.
  */
 
-#ifndef __GST_RTP_DECRYPT_H__
-#define __GST_RTP_DECRYPT_H__
+#ifndef __RTP_DECRYPT_H__
+#define __RTP_DECRYPT_H__
 
 #include <gst/gst.h>
 
@@ -48,4 +48,4 @@ struct _GstRtpDecryptClass
 
 GType gst_rtp_decrypt_get_type(void);
 
-#endif /* __GST_RTP_DECRYPT_H__ */
+#endif /* __RTP_DECRYPT_H__ */

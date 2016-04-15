@@ -23,8 +23,10 @@
 #include <gst/gst.h>
 #include <glib/gi18n.h>
 #include "application.h"
-#include "gstrtpencrypt.h"
-#include "gstrtpdecrypt.h"
+
+#include "ringback.h"
+#include "rtpencrypt.h"
+#include "rtpdecrypt.h"
 
 #define RECV_TIMEOUT 3000000000L // 3 seconds
 
@@ -191,8 +193,8 @@ static gboolean dialog_run(Application *app)
         GstElement *sink_volume = gst_bin_get_by_name(GST_BIN(app->rx_pipeline), "sink_volume");
         g_object_set(sink_volume, "mute", FALSE, NULL);
 
-        GstElement *src_volume = gst_bin_get_by_name(GST_BIN(app->tx_pipeline), "src_volume");
-        g_object_set(src_volume, "mute", FALSE, NULL);
+        GstElement *ringback = gst_bin_get_by_name(GST_BIN(app->tx_pipeline), "ringback");
+        g_object_set(ringback, "enabled", FALSE, NULL);
     }
     else call_stop(app->button_stop, app);
 
@@ -272,8 +274,8 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     app->tx_watch = gst_bus_add_watch(bus, (GstBusFunc)bus_watch, app);
     gst_object_unref(bus);
 
-    GstElement *src_volume = gst_element_factory_make("volume", "src_volume");
-    g_object_set(src_volume, "mute", remote, NULL);
+    GstElement *ringback = gst_element_factory_make("ringback", "ringback");
+    g_object_set(ringback, "enabled", remote, NULL);
 
     GstElement *audio_src = gst_element_factory_make("autoaudiosrc", "audio_src");
     GstElement *audio_enc = gst_element_factory_make("opusenc", "audio_enc");
@@ -289,8 +291,8 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     GstElement *rtp_sink = gst_element_factory_make("udpsink", "rtp_sink");
     g_object_set(rtp_sink, "socket", socket, "close-socket", FALSE, "host", host, "port", port, NULL);
 
-    gst_bin_add_many(GST_BIN(app->tx_pipeline), audio_src, src_volume, audio_enc, audio_pay, rtp_enc, rtp_sink, NULL);
-    gst_element_link_many(audio_src, src_volume, audio_enc, audio_pay, rtp_enc, rtp_sink, NULL);
+    gst_bin_add_many(GST_BIN(app->tx_pipeline), audio_src, ringback, audio_enc, audio_pay, rtp_enc, rtp_sink, NULL);
+    gst_element_link_many(audio_src, ringback, audio_enc, audio_pay, rtp_enc, rtp_sink, NULL);
     gst_debug_bin_to_dot_file_with_ts(GST_BIN(app->tx_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "start-tx-pipeline");
     gst_element_set_state(app->tx_pipeline, GST_STATE_PLAYING);
 
@@ -335,7 +337,8 @@ static void menu_popup(GtkWidget *widget, guint button, guint activate_time, App
 
 static gboolean plugin_init(GstPlugin *plugin)
 {
-    return gst_element_register(plugin, "rtpencrypt", GST_RANK_NONE, GST_TYPE_RTP_ENCRYPT) &&
+    return gst_element_register(plugin, "ringback", GST_RANK_NONE, GST_TYPE_RINGBACK) &&
+           gst_element_register(plugin, "rtpencrypt", GST_RANK_NONE, GST_TYPE_RTP_ENCRYPT) &&
            gst_element_register(plugin, "rtpdecrypt", GST_RANK_NONE, GST_TYPE_RTP_DECRYPT);
 }
 
@@ -371,7 +374,7 @@ gboolean application_init(GError **error)
         return FALSE;
     }
 
-    if(!gst_plugin_register_static(GST_VERSION_MAJOR, GST_VERSION_MINOR, "rtpcrypto", "RTP encryption/decryption",
+    if(!gst_plugin_register_static(GST_VERSION_MAJOR, GST_VERSION_MINOR, "nanotalk-gst", "Nanotalk GStreamer plugin",
             plugin_init, PACKAGE_VERSION, "GPL", PACKAGE_TARNAME, PACKAGE_NAME, PACKAGE_URL))
     {
         g_set_error_literal(error, GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_INIT, _("Cannot register GStreamer plugin"));

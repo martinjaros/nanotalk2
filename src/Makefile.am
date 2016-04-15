@@ -4,10 +4,10 @@ DEFS += -DLOCALEDIR=\"$(localedir)\"
 
 bin_PROGRAMS = nanotalk
 nanotalk_SOURCES = main.c dhtclient.c
-noinst_HEADERS = application.h dhtclient.h glib-compat.h gstrtpencrypt.h gstrtpdecrypt.h
+noinst_HEADERS = application.h dhtclient.h glib-compat.h ringback.h rtpencrypt.h rtpdecrypt.h
 
 if ENABLE_GUI
 AM_CFLAGS += $(GTK_CFLAGS) $(GST_CFLAGS)
-LDADD += $(GTK_LIBS) $(GST_LIBS)
-nanotalk_SOURCES += application.c gstrtpencrypt.c gstrtpdecrypt.c
+LDADD += $(GTK_LIBS) $(GST_LIBS) $(LIBM)
+nanotalk_SOURCES += application.c ringback.c rtpencrypt.c rtpdecrypt.c
 endif
