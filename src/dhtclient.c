@@ -166,6 +166,7 @@ struct _dht_connection
     GSocket *socket;
     GSocketAddress *sockaddr;
     guint timeout_source; // GSource ID within default context
+    gboolean is_remote;
 };
 
 struct _dht_client_private
@@ -898,6 +899,7 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
                     memcpy(connection->id, msg->srcid, DHT_HASH_SIZE);
                     connection->parent = client;
                     connection->socket = socket;
+                    connection->is_remote = TRUE;
                     connection->timeout_source = g_timeout_add(DHT_TIMEOUT_MS, dht_connection_timeout, connection);
                     g_hash_table_insert(priv->connection_table, connection->nonce, connection);
                 }
@@ -922,8 +924,7 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
 
                 g_debug("received connection response");
                 g_autofree gchar *id_base64 = g_base64_encode(connection->id, DHT_HASH_SIZE);
-                gboolean is_remote = connection->sockaddr ? FALSE : TRUE;
-                if(!is_remote)
+                if(!connection->is_remote)
                 {
                     MsgConnectionResponse response;
                     response.type = MSG_TYPE(priv->family) | MSG_CONNECTION_RES;
@@ -951,7 +952,7 @@ static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpoi
                 g_autoptr(GBytes) enc_key_bytes = g_bytes_new(enc_key, sizeof(enc_key));
                 g_autoptr(GBytes) dec_key_bytes = g_bytes_new(dec_key, sizeof(dec_key));
                 g_signal_emit(client, dht_client_signals[SIGNAL_NEW_CONNECTION], 0,
-                        id_base64, connection->socket, sockaddr, enc_key_bytes, dec_key_bytes, is_remote);
+                        id_base64, connection->socket, sockaddr, enc_key_bytes, dec_key_bytes, connection->is_remote);
 
                 g_hash_table_remove(priv->connection_table, connection->nonce);
             }

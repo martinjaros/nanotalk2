@@ -18,7 +18,7 @@
 #include "ringback.h"
 
 #define DEFAULT_ENABLED     FALSE
-#define DEFAULT_TONE_AMPL   0.75
+#define DEFAULT_TONE_AMPL   0.5
 #define DEFAULT_TONE_FREQ   425
 #define DEFAULT_TONE_DUR    1
 #define DEFAULT_PAUSE_DUR   4

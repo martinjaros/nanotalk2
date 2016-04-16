@@ -1,4 +1,7 @@
-2016-04-09  Martin Jaros <xjaros32@stud.feec.vutbr.cz>
+2016-04-16 Martin Jaros <xjaros32@stud.feec.vutbr.cz>
+    * ringback tone
+    * IPv4-mapped IPv6 support
 
+2016-04-09  Martin Jaros <xjaros32@stud.feec.vutbr.cz>
     * README, COPYING, NEWS, ChangeLog
     * gettext autotools integration

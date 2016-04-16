@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: nanotalk 2.0.1\n"
 "Report-Msgid-Bugs-To: xjaros32@stud.feec.vutbr.cz\n"
-"POT-Creation-Date: 2016-04-11 15:42+0200\n"
+"POT-Creation-Date: 2016-04-16 21:55+0200\n"
 "PO-Revision-Date: 2016-04-11 15:42+0200\n"
 "Last-Translator: Martin Jaroš <xjaros32@stud.feec.vutbr.cz>\n"
 "Language-Team: \n"
@@ -16,11 +16,11 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=3; plural=(n==1) ? 0 : (n>=2 && n<=4) ? 1 : 2;\n"
 
-#: src/main.c:54 src/dhtclient.c:314
+#: src/main.c:54 src/dhtclient.c:322
 msgid "Peers"
 msgstr "Spojení"
 
-#: src/main.c:55 src/dhtclient.c:322
+#: src/main.c:55 src/dhtclient.c:330
 msgid "Last seen"
 msgstr "Viděn"
 
@@ -76,131 +76,131 @@ msgstr "Vypiš verzi programu"
 msgid "Client ID %s\n"
 msgstr "ID klienta %s\n"
 
-#: src/application.c:173
+#: src/application.c:177
 #, c-format
 msgid "Answer an incoming call from <b>%s</b> ?"
 msgstr "Přijmout příchozí hovor od <b>%s</b> ?"
 
-#: src/application.c:348
+#: src/application.c:354
 msgid "Missing GStreamer Base Plugins"
 msgstr "Chybí GStreamer Base Plugins"
 
-#: src/application.c:358
+#: src/application.c:364
 msgid "Missing GStreamer Good Plugins"
 msgstr "Chybí GStreamer Good Plugins"
 
-#: src/application.c:367
+#: src/application.c:373
 msgid "Missing Opus plugin for GStreamer"
 msgstr "Chybí Opus plugin pro GStreamer"
 
-#: src/application.c:374
+#: src/application.c:380
 msgid "Cannot register GStreamer plugin"
 msgstr "Nelze zaregistrovat GStreamer plugin"
 
-#: src/application.c:463
+#: src/application.c:470
 msgid "About"
 msgstr "O aplikaci"
 
-#: src/application.c:473
+#: src/application.c:480
 msgid "Quit"
 msgstr "Ukončit"
 
-#: src/dhtclient.c:281
+#: src/dhtclient.c:289
 msgid "Key"
 msgstr "Klíč"
 
-#: src/dhtclient.c:281
+#: src/dhtclient.c:289
 msgid "Client private key"
 msgstr "Soukromý klíč klienta"
 
-#: src/dhtclient.c:289
+#: src/dhtclient.c:297
 msgid "Socket"
 msgstr "Soket"
 
-#: src/dhtclient.c:289
+#: src/dhtclient.c:297
 msgid "Client socket"
 msgstr "Soket klienta"
 
-#: src/dhtclient.c:297
+#: src/dhtclient.c:305
 msgid "Key size"
 msgstr "Velikost klíče"
 
-#: src/dhtclient.c:297
+#: src/dhtclient.c:305
 msgid "Size of the derived keys"
 msgstr "Velikost derivovaných klíčů"
 
-#: src/dhtclient.c:306
+#: src/dhtclient.c:314
 msgid "ID"
 msgstr "ID"
 
-#: src/dhtclient.c:306
+#: src/dhtclient.c:314
 msgid "Client ID"
 msgstr "ID klienta"
 
-#: src/dhtclient.c:314
+#: src/dhtclient.c:322
 msgid "Number of peers"
 msgstr "Počet spojení"
 
-#: src/dhtclient.c:322
+#: src/dhtclient.c:330
 msgid "Time of last message"
 msgstr "Čas poslední zprávy"
 
-#: src/dhtclient.c:330
+#: src/dhtclient.c:338
 msgid "Packets received"
 msgstr "Přijato paketů"
 
-#: src/dhtclient.c:330
+#: src/dhtclient.c:338
 msgid "Number of received packets"
 msgstr "Počet přijatých paketů"
 
-#: src/dhtclient.c:338
+#: src/dhtclient.c:346
 msgid "Packets sent"
 msgstr "Odesláno paketů"
 
-#: src/dhtclient.c:338
+#: src/dhtclient.c:346
 msgid "Number of sent packets"
 msgstr "Počet odeslaných paketů"
 
-#: src/dhtclient.c:346
+#: src/dhtclient.c:354
 msgid "Bytes received"
 msgstr "Přijato bajtů"
 
-#: src/dhtclient.c:346
+#: src/dhtclient.c:354
 msgid "Number of received bytes"
 msgstr "Počet přijatých bajtů"
 
-#: src/dhtclient.c:354
+#: src/dhtclient.c:362
 msgid "Bytes sent"
 msgstr "Odesláno bajtů"
 
-#: src/dhtclient.c:354
+#: src/dhtclient.c:362
 msgid "Number of sent bytes"
 msgstr "Počet odeslaných bajtů"
 
-#: src/dhtclient.c:411
+#: src/dhtclient.c:423
 msgid "Invalid key size"
 msgstr "Nesprávná velikost klíče"
 
-#: src/dhtclient.c:483
+#: src/dhtclient.c:495
 msgid "Unknown host"
 msgstr "Neznámý host"
 
-#: src/dhtclient.c:497
+#: src/dhtclient.c:509
 msgid "Invalid ID format"
 msgstr "Neplatný formát ID"
 
-#: src/dhtclient.c:504
+#: src/dhtclient.c:516
 msgid "Connection refused"
 msgstr "Spojení zamítnuto"
 
-#: src/dhtclient.c:1232
+#: src/dhtclient.c:1274
 msgid "DHT lookup failed"
 msgstr "Hledání DHT se nezdařilo"
 
-#: src/dhtclient.c:1260
+#: src/dhtclient.c:1302
 msgid "Bootstrap timed out"
 msgstr "Vypršel čas zavedení"
 
-#: src/dhtclient.c:1283
+#: src/dhtclient.c:1325
 msgid "Connection timed out"
 msgstr "Vypršel čas spojení"
