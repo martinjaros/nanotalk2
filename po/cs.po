@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: nanotalk 2.0.1\n"
 "Report-Msgid-Bugs-To: xjaros32@stud.feec.vutbr.cz\n"
-"POT-Creation-Date: 2016-04-16 21:55+0200\n"
+"POT-Creation-Date: 2016-04-18 17:32+0200\n"
 "PO-Revision-Date: 2016-04-11 15:42+0200\n"
 "Last-Translator: Martin Jaroš <xjaros32@stud.feec.vutbr.cz>\n"
 "Language-Team: \n"
@@ -81,27 +81,27 @@ msgstr "ID klienta %s\n"
 msgid "Answer an incoming call from <b>%s</b> ?"
 msgstr "Přijmout příchozí hovor od <b>%s</b> ?"
 
-#: src/application.c:354
+#: src/application.c:353
 msgid "Missing GStreamer Base Plugins"
 msgstr "Chybí GStreamer Base Plugins"
 
-#: src/application.c:364
+#: src/application.c:363
 msgid "Missing GStreamer Good Plugins"
 msgstr "Chybí GStreamer Good Plugins"
 
-#: src/application.c:373
+#: src/application.c:372
 msgid "Missing Opus plugin for GStreamer"
 msgstr "Chybí Opus plugin pro GStreamer"
 
-#: src/application.c:380
+#: src/application.c:379
 msgid "Cannot register GStreamer plugin"
 msgstr "Nelze zaregistrovat GStreamer plugin"
 
-#: src/application.c:470
+#: src/application.c:469
 msgid "About"
 msgstr "O aplikaci"
 
-#: src/application.c:480
+#: src/application.c:479
 msgid "Quit"
 msgstr "Ukončit"
 
@@ -177,30 +177,30 @@ msgstr "Odesláno bajtů"
 msgid "Number of sent bytes"
 msgstr "Počet odeslaných bajtů"
 
-#: src/dhtclient.c:423
+#: src/dhtclient.c:419
 msgid "Invalid key size"
 msgstr "Nesprávná velikost klíče"
 
-#: src/dhtclient.c:495
+#: src/dhtclient.c:491
 msgid "Unknown host"
 msgstr "Neznámý host"
 
-#: src/dhtclient.c:509
+#: src/dhtclient.c:505
 msgid "Invalid ID format"
 msgstr "Neplatný formát ID"
 
-#: src/dhtclient.c:516
+#: src/dhtclient.c:512
 msgid "Connection refused"
 msgstr "Spojení zamítnuto"
 
-#: src/dhtclient.c:1274
+#: src/dhtclient.c:1271
 msgid "DHT lookup failed"
 msgstr "Hledání DHT se nezdařilo"
 
-#: src/dhtclient.c:1302
+#: src/dhtclient.c:1299
 msgid "Bootstrap timed out"
 msgstr "Vypršel čas zavedení"
 
-#: src/dhtclient.c:1325
+#: src/dhtclient.c:1322
 msgid "Connection timed out"
 msgstr "Vypršel čas spojení"

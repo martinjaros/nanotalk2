@@ -45,14 +45,12 @@ struct _DhtClientClass
      * DhtClientClass::accept_connection:
      * @client: Object instance that emitted the signal
      * @id: ID of the remote peer (20 bytes, Base64 encoded)
-     * @sockaddr: Remote peer address
-     * @remote: %TRUE if the connection was initiated by the remote peer
      *
      * A virtual method implementing the #DhtClient::accept-connection signal.
      *
-     * Returns: (transfer full): Socket allocated for this connection or %NULL to reject the connection
+     * Returns: %TRUE if the connection should be accepted or %FALSE to reject the connection
      */
-    GSocket* (*accept_connection)(DhtClient *client, const gchar *id, GSocketAddress *sockaddr, gboolean remote);
+    gboolean (*accept_connection)(DhtClient *client, const gchar *id);
 
     /**
      * DhtClientClass::new_connection:
@@ -117,8 +115,8 @@ gboolean dht_client_bootstrap(DhtClient *client, const gchar *host, guint16 port
  * @error: (allow-none): Output location for synchronous errors
  *
  * Finds host by @id and creates a connection, having its own socket socket pair and securely derived keys.
- * The newly allocated connections are signaled with #DhtClient::accept-connection and #DhtClient::new-connection,
- * the user should either connect the signals or override the class methods.
+ * The newly allocated connections are signaled with #DhtClient::new-connection,
+ * the user should either connect the signal or override the class method.
  * Asynchronous errors will be reported via #DhtClient::on-error signal:
  *
  *   #GIOError.HOST_NOT_FOUND - Lookup for a host with the specified ID failed

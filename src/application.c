@@ -201,16 +201,15 @@ static gboolean dialog_run(Application *app)
     return G_SOURCE_REMOVE;
 }
 
-static GSocket* accept_connection(DhtClient *client, const gchar *id, GSocketAddress *sockaddr, gboolean remote, Application *app)
+static gboolean accept_connection(DhtClient *client, const gchar *id, Application *app)
 {
-    gboolean do_accept = !remote;
-    if(remote && gtk_widget_is_sensitive(app->button_start))
+    if(gtk_widget_is_sensitive(app->button_start))
     {
         gtk_widget_set_sensitive(app->button_start, FALSE);
-        do_accept = TRUE;
+        return TRUE;
     }
 
-    return do_accept ? g_socket_new(app->family, G_SOCKET_TYPE_DATAGRAM, G_SOCKET_PROTOCOL_UDP, NULL) : NULL;
+    return FALSE;
 }
 
 static void new_connection(DhtClient *client, const gchar *peer_id,
