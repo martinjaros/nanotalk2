@@ -296,7 +296,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * 32-byte private key.
      */
     g_object_class_install_property(object_class, PROP_KEY,
-            g_param_spec_boxed("key", _("Key"), _("Client private key"), G_TYPE_BYTES,
+            g_param_spec_boxed("key", "Key", "Client private key", G_TYPE_BYTES,
                     G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -304,7 +304,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * IPv4 or IPv6 datagram socket used for IO operations.
      */
     g_object_class_install_property(object_class, PROP_SOCKET,
-            g_param_spec_object("socket", _("Socket"), _("Client socket"), G_TYPE_SOCKET,
+            g_param_spec_object("socket", "Socket", "Client socket", G_TYPE_SOCKET,
                     G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -312,7 +312,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * Size of the derived keys passed to #DhtClient::new-connection signal.
      */
     g_object_class_install_property(object_class, PROP_KEY_SIZE,
-            g_param_spec_uint("key-size", _("Key size"), _("Size of the derived keys"),
+            g_param_spec_uint("key-size", "Key size", "Size of the derived keys",
                     crypto_generichash_BYTES_MIN, crypto_generichash_BYTES_MAX, crypto_generichash_BYTES,
                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
@@ -321,7 +321,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * Client ID derived from private key (20 bytes, Base64 encoded).
      */
     g_object_class_install_property(object_class, PROP_ID,
-            g_param_spec_string("id", _("ID"), _("Client ID"), NULL,
+            g_param_spec_string("id", "ID", "Client ID", NULL,
                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -329,15 +329,15 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * Number of alive peers the client knows about.
      */
     g_object_class_install_property(object_class, PROP_PEERS,
-            g_param_spec_uint("peers", _("Peers"), _("Number of peers"), 0, G_MAXUINT, 0,
+            g_param_spec_uint("peers", "Peers", "Number of peers", 0, G_MAXUINT, 0,
                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     /**
      * DhtClient:last-seen:
-     * Local time of last message reception.
+     * Local time of last message reception or NULL if no message was yet received.
      */
     g_object_class_install_property(object_class, PROP_LAST_SEEN,
-            g_param_spec_boxed("last-seen", _("Last seen"), _("Time of last message"), G_TYPE_DATE_TIME,
+            g_param_spec_boxed("last-seen", "Last seen", "Time of last message", G_TYPE_DATE_TIME,
                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -345,7 +345,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * Total number of received packets.
      */
     g_object_class_install_property(object_class, PROP_PACKETS_RECEIVED,
-            g_param_spec_uint64("packets-received", _("Packets received"), _("Number of received packets"), 0, G_MAXUINT64, 0,
+            g_param_spec_uint64("packets-received", "Packets received", "Number of received packets", 0, G_MAXUINT64, 0,
                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -353,7 +353,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * Total number of sent packets.
      */
     g_object_class_install_property(object_class, PROP_PACKETS_SENT,
-            g_param_spec_uint64("packets-sent", _("Packets sent"), _("Number of sent packets"), 0, G_MAXUINT64, 0,
+            g_param_spec_uint64("packets-sent", "Packets sent", "Number of sent packets", 0, G_MAXUINT64, 0,
                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -361,7 +361,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * Total number of received bytes.
      */
     g_object_class_install_property(object_class, PROP_BYTES_RECEIVED,
-            g_param_spec_uint64("bytes-received", _("Bytes received"), _("Number of received bytes"), 0, G_MAXUINT64, 0,
+            g_param_spec_uint64("bytes-received", "Bytes received", "Number of received bytes", 0, G_MAXUINT64, 0,
                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -369,7 +369,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * Total number of sent bytes.
      */
     g_object_class_install_property(object_class, PROP_BYTES_SENT,
-            g_param_spec_uint64("bytes-sent", _("Bytes sent"), _("Number of sent bytes"), 0, G_MAXUINT64, 0,
+            g_param_spec_uint64("bytes-sent", "Bytes sent", "Number of sent bytes", 0, G_MAXUINT64, 0,
                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -594,7 +594,9 @@ static void dht_client_get_property(GObject *obj, guint prop, GValue *value, GPa
 
         case PROP_LAST_SEEN:
         {
-            g_value_take_boxed(value, g_date_time_new_from_timeval_local(&priv->last_seen));
+            if(priv->last_seen.tv_sec && priv->last_seen.tv_usec)
+                g_value_take_boxed(value, g_date_time_new_from_timeval_local(&priv->last_seen));
+
             break;
         }
 
@@ -1292,7 +1294,7 @@ static gboolean dht_lookup_dispatch(DhtLookup *lookup, gboolean emit_error, GErr
             return TRUE;
         }
 
-        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_HOST_NOT_FOUND, _("DHT lookup failed"));
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_HOST_NOT_FOUND, _("Lookup failed"));
         if(error && emit_error)
         {
             g_autofree gchar *id_base64 = g_base64_encode(lookup->id, DHT_HASH_SIZE);

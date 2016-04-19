@@ -16,12 +16,9 @@ if GRAPHS:
     os.environ.update({'GST_DEBUG_DUMP_DOT_DIR': '.'})
     subprocess.call('rm -f *-pipeline.dot.svg', shell=True)
 
-args1 = 'nanotalk -s incoming-call.ogg -k test1.key -a aliases.txt'
-args2 = 'nanotalk -s incoming-call.ogg -k test2.key -a aliases.txt -l 5005 -h localhost'
-
-proc1 = subprocess.Popen(args1.split(), env=os.environ)
+proc1 = subprocess.Popen('nanotalk -c test1.cfg -k test1.key -a aliases.txt'.split(), env=os.environ)
 time.sleep(.1)
-proc2 = subprocess.Popen(args2.split(), env=os.environ)
+proc2 = subprocess.Popen('nanotalk -c test2.cfg -k test2.key -a aliases.txt'.split(), env=os.environ)
 
 try:
     proc1.wait()

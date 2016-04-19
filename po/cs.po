@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: nanotalk 2.0.1\n"
 "Report-Msgid-Bugs-To: xjaros32@stud.feec.vutbr.cz\n"
-"POT-Creation-Date: 2016-04-18 17:32+0200\n"
-"PO-Revision-Date: 2016-04-11 15:42+0200\n"
+"POT-Creation-Date: 2016-04-21 01:41+0200\n"
+"PO-Revision-Date: 2016-04-21 01:41+0200\n"
 "Last-Translator: Martin Jaroš <xjaros32@stud.feec.vutbr.cz>\n"
 "Language-Team: \n"
 "Language: cs\n"
@@ -16,191 +16,146 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=3; plural=(n==1) ? 0 : (n>=2 && n<=4) ? 1 : 2;\n"
 
-#: src/main.c:54 src/dhtclient.c:322
-msgid "Peers"
-msgstr "Spojení"
+#: src/main.c:43
+msgid "Print program version"
+msgstr "Vypiš verzi programu"
 
-#: src/main.c:55 src/dhtclient.c:330
-msgid "Last seen"
-msgstr "Viděn"
+#: src/main.c:44
+msgid "Configuration file"
+msgstr "Konfigurační soubor"
 
-#: src/main.c:56
-msgid "Received"
-msgstr "Přijato"
+#: src/main.c:44 src/main.c:45 src/main.c:48
+msgid "FILE"
+msgstr "SOUBOR"
 
-#: src/main.c:56 src/main.c:57
+#: src/main.c:45
+msgid "Private key"
+msgstr "Soukromý klíč"
+
+#: src/main.c:48
+msgid "List of aliases"
+msgstr "Seznam přezdívek"
+
+#: src/main.c:63 src/application.c:607
+msgid "Nanotalk distributed multimedia service"
+msgstr "Nanotalk distribuovaná multimediální služba"
+
+#: src/application.c:172
+#, c-format
+msgid "Answer an incoming call from <b>%s</b> ?"
+msgstr "Přijmout příchozí hovor od <b>%s</b> ?"
+
+#: src/application.c:385
+msgid "Save changes"
+msgstr "Uložit změny"
+
+#: src/application.c:395
+msgid "Nanotalk aliases"
+msgstr "Nanotalk přezdívky"
+
+#: src/application.c:426 src/application.c:429
 msgid "packet"
 msgid_plural "packets"
 msgstr[0] "paket"
 msgstr[1] "pakety"
 msgstr[2] "paketů"
 
-#: src/main.c:57
-msgid "Sent"
-msgstr "Odesláno"
+#: src/application.c:498
+msgid "Nanotalk configuration"
+msgstr "Nanotalk konfigurace"
 
-#: src/main.c:81
-msgid "Enable IPv6"
-msgstr "Povolit IPv6"
-
-#: src/main.c:82
-msgid "Private key"
-msgstr "Soukromý klíč"
-
-#: src/main.c:83
-msgid "Source port"
-msgstr "Zdrojový port"
-
-#: src/main.c:84
-msgid "Bootstrap address"
-msgstr "Zaváděcí adresa"
-
-#: src/main.c:85
-msgid "Bootstrap port"
-msgstr "Zaváděcí port"
-
-#: src/main.c:88
-msgid "List of aliases"
-msgstr "Seznam přezdívek"
-
-#: src/main.c:89
-msgid "Incoming call sound"
-msgstr "Zvuk příchozího hovoru"
-
-#: src/main.c:92
-msgid "Print program version"
-msgstr "Vypiš verzi programu"
-
-#: src/main.c:150
-#, c-format
-msgid "Client ID %s\n"
-msgstr "ID klienta %s\n"
-
-#: src/application.c:177
-#, c-format
-msgid "Answer an incoming call from <b>%s</b> ?"
-msgstr "Přijmout příchozí hovor od <b>%s</b> ?"
-
-#: src/application.c:353
-msgid "Missing GStreamer Base Plugins"
-msgstr "Chybí GStreamer Base Plugins"
-
-#: src/application.c:363
-msgid "Missing GStreamer Good Plugins"
-msgstr "Chybí GStreamer Good Plugins"
-
-#: src/application.c:372
-msgid "Missing Opus plugin for GStreamer"
-msgstr "Chybí Opus plugin pro GStreamer"
-
-#: src/application.c:379
-msgid "Cannot register GStreamer plugin"
-msgstr "Nelze zaregistrovat GStreamer plugin"
-
-#: src/application.c:469
-msgid "About"
-msgstr "O aplikaci"
-
-#: src/application.c:479
-msgid "Quit"
-msgstr "Ukončit"
-
-#: src/dhtclient.c:289
-msgid "Key"
-msgstr "Klíč"
-
-#: src/dhtclient.c:289
-msgid "Client private key"
-msgstr "Soukromý klíč klienta"
-
-#: src/dhtclient.c:297
-msgid "Socket"
-msgstr "Soket"
-
-#: src/dhtclient.c:297
-msgid "Client socket"
-msgstr "Soket klienta"
-
-#: src/dhtclient.c:305
-msgid "Key size"
-msgstr "Velikost klíče"
-
-#: src/dhtclient.c:305
-msgid "Size of the derived keys"
-msgstr "Velikost derivovaných klíčů"
-
-#: src/dhtclient.c:314
-msgid "ID"
-msgstr "ID"
-
-#: src/dhtclient.c:314
+#: src/application.c:509
 msgid "Client ID"
 msgstr "ID klienta"
 
-#: src/dhtclient.c:322
-msgid "Number of peers"
-msgstr "Počet spojení"
+#: src/application.c:518
+msgid "Last seen"
+msgstr "Naposledy viděn"
 
-#: src/dhtclient.c:330
-msgid "Time of last message"
-msgstr "Čas poslední zprávy"
+#: src/application.c:524
+msgid "Received"
+msgstr "Přijato"
 
-#: src/dhtclient.c:338
-msgid "Packets received"
-msgstr "Přijato paketů"
+#: src/application.c:530
+msgid "Sent"
+msgstr "Odesláno"
 
-#: src/dhtclient.c:338
-msgid "Number of received packets"
-msgstr "Počet přijatých paketů"
+#: src/application.c:536
+msgid "Peers"
+msgstr "Spojení"
 
-#: src/dhtclient.c:346
-msgid "Packets sent"
-msgstr "Odesláno paketů"
+#: src/application.c:551
+msgid "Enable IPv6"
+msgstr "Povolit IPv6"
 
-#: src/dhtclient.c:346
-msgid "Number of sent packets"
-msgstr "Počet odeslaných paketů"
+#: src/application.c:561
+msgid "Local port"
+msgstr "Lokální port"
 
-#: src/dhtclient.c:354
-msgid "Bytes received"
-msgstr "Přijato bajtů"
+#: src/application.c:568
+msgid "Bootstrap host"
+msgstr "Zaváděcí hostitel"
 
-#: src/dhtclient.c:354
-msgid "Number of received bytes"
-msgstr "Počet přijatých bajtů"
+#: src/application.c:576
+msgid "Bootstrap port"
+msgstr "Zaváděcí port"
 
-#: src/dhtclient.c:362
-msgid "Bytes sent"
-msgstr "Odesláno bajtů"
+#: src/application.c:587
+msgid "Apply"
+msgstr "Potvrdit"
 
-#: src/dhtclient.c:362
-msgid "Number of sent bytes"
-msgstr "Počet odeslaných bajtů"
+#: src/application.c:591
+msgid "Close"
+msgstr "Zavřít"
 
-#: src/dhtclient.c:419
+#: src/application.c:632
+msgid "Missing GStreamer Base Plugins"
+msgstr "Chybí GStreamer Base Plugins"
+
+#: src/application.c:642
+msgid "Missing GStreamer Good Plugins"
+msgstr "Chybí GStreamer Good Plugins"
+
+#: src/application.c:651
+msgid "Missing Opus plugin for GStreamer"
+msgstr "Chybí Opus plugin pro GStreamer"
+
+#: src/application.c:658
+msgid "Cannot register GStreamer plugin"
+msgstr "Nelze zaregistrovat GStreamer plugin"
+
+#: src/application.c:752
+msgid "Preferences"
+msgstr "Nastavení"
+
+#: src/application.c:758
+msgid "About"
+msgstr "O aplikaci"
+
+#: src/application.c:764
+msgid "Quit"
+msgstr "Ukončit"
+
+#: src/dhtclient.c:430
 msgid "Invalid key size"
 msgstr "Nesprávná velikost klíče"
 
-#: src/dhtclient.c:491
-msgid "Unknown host"
-msgstr "Neznámý host"
-
-#: src/dhtclient.c:505
+#: src/dhtclient.c:471
 msgid "Invalid ID format"
 msgstr "Neplatný formát ID"
 
-#: src/dhtclient.c:512
+#: src/dhtclient.c:478
 msgid "Connection refused"
 msgstr "Spojení zamítnuto"
 
-#: src/dhtclient.c:1271
-msgid "DHT lookup failed"
-msgstr "Hledání DHT se nezdařilo"
+#: src/dhtclient.c:1297
+msgid "Lookup failed"
+msgstr "Hledání se nezdařilo"
 
-#: src/dhtclient.c:1299
+#: src/dhtclient.c:1325
 msgid "Bootstrap timed out"
 msgstr "Vypršel čas zavedení"
 
-#: src/dhtclient.c:1322
+#: src/dhtclient.c:1348
 msgid "Connection timed out"
 msgstr "Vypršel čas spojení"

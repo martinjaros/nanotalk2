@@ -17,6 +17,7 @@
 #endif /* HAVE_CONFIG_H */
 
 #define G_LOG_DOMAIN "Nanotalk"
+#define GDK_DISABLE_DEPRECATION_WARNINGS
 
 #include <string.h>
 #include <gtk/gtk.h>
@@ -32,17 +33,21 @@
 
 struct _application
 {
-    GtkWidget *window, *entry, *button_start, *button_stop, *menu, *dialog;
+    GtkWidget *main_window, *entry, *button_start, *button_volume, *button_stop, *call_dialog;
+    GtkWidget *config_window, *label_id, *label_last_seen, *label_received, *label_sent, *label_peers;
+    GtkWidget *switch_ipv6, *spin_local_port, *entry_bootstrap_host, *spin_bootstrap_port;
+    GtkWidget *menu, *editor_window;
     GtkStatusIcon *status_icon;
     GtkListStore *completions;
-
-    GSocketFamily family;
+    GtkTextBuffer *aliases;
     DhtClient *client;
 
     GstElement *rx_pipeline, *tx_pipeline;
     guint rx_watch, tx_watch;
 
-    gchar *sound_file;
+    GKeyFile *config;
+    gchar *config_file;
+    gchar *aliases_file;
 };
 
 static void lookup_start(Application *app, const gchar *id)
@@ -60,6 +65,11 @@ static void lookup_start(Application *app, const gchar *id)
 static void call_start(GtkWidget *widget, Application *app)
 {
     const gchar *text = gtk_entry_get_text(GTK_ENTRY(app->entry));
+    if((strlen(text) == DHT_ID_LENGTH) && (text[DHT_ID_LENGTH - 1] == '='))
+    {
+        lookup_start(app, text);
+        return;
+    }
 
     // Translate alias to ID
     GtkTreeIter iter;
@@ -70,20 +80,20 @@ static void call_start(GtkWidget *widget, Application *app)
         g_autofree gchar *alias = NULL;
         gtk_tree_model_get(GTK_TREE_MODEL(app->completions), &iter, 0, &id, 1, &alias, -1);
         if(strcmp(text, alias) == 0)
-            return lookup_start(app, id);
+        {
+            lookup_start(app, id);
+            return;
+        }
 
         valid = gtk_tree_model_iter_next(GTK_TREE_MODEL(app->completions), &iter);
     }
-
-    if(strlen(text) == DHT_ID_LENGTH)
-        lookup_start(app, text);
 }
 
 static void call_stop(GtkWidget *widget, Application *app)
 {
-    if(app->dialog)
+    if(app->call_dialog)
     {
-        gtk_dialog_response(GTK_DIALOG(app->dialog), GTK_RESPONSE_CANCEL);
+        gtk_dialog_response(GTK_DIALOG(app->call_dialog), GTK_RESPONSE_CANCEL);
         return;
     }
 
@@ -112,9 +122,19 @@ static void call_stop(GtkWidget *widget, Application *app)
 static void call_toggle(GtkWidget *widget, Application *app)
 {
     if(gtk_widget_is_sensitive(app->button_start))
-        call_start(app->button_start, app);
+        call_start(NULL, app);
     else if(gtk_widget_is_sensitive(app->button_stop))
-        call_stop(app->button_stop, app);
+        call_stop(NULL, app);
+}
+
+static void volume_changed(GtkWidget *widget, gdouble value, Application *app)
+{
+    if(app->rx_pipeline)
+    {
+        GstElement *volume = gst_bin_get_by_name(GST_BIN(app->rx_pipeline), "volume");
+        g_object_set(volume, "volume", value, NULL);
+        gst_object_unref(volume);
+    }
 }
 
 static gboolean bus_watch(GstBus *bus, GstMessage *message, Application *app)
@@ -134,15 +154,7 @@ static gboolean bus_watch(GstBus *bus, GstMessage *message, Application *app)
         {
             // Stop pipeline on socket timeout
             if(strcmp(gst_structure_get_name(gst_message_get_structure(message)), "GstUDPSrcTimeout") == 0)
-                call_stop(app->button_stop, app);
-
-            break;
-        }
-
-        case GST_MESSAGE_EOS:
-        {
-            if(strcmp(GST_OBJECT_NAME(message->src), "playbin_loop") == 0)
-                gst_element_seek_simple(GST_ELEMENT(message->src), GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH, 0);
+                call_stop(NULL, app);
 
             break;
         }
@@ -155,48 +167,28 @@ static gboolean bus_watch(GstBus *bus, GstMessage *message, Application *app)
 
 static gboolean dialog_run(Application *app)
 {
-    GstElement *playbin = NULL;
-    guint playbin_watch;
-
-    if(app->sound_file)
-    {
-        // Play sound file
-        playbin = gst_element_factory_make("playbin", "playbin_loop");
-        GstBus *bus = gst_pipeline_get_bus(GST_PIPELINE(playbin));
-        playbin_watch = gst_bus_add_watch(bus, (GstBusFunc)bus_watch, app);
-        gst_object_unref(bus);
-
-        g_autofree gchar *uri = gst_filename_to_uri(app->sound_file, NULL);
-        g_object_set(playbin, "uri", uri, NULL);
-        gst_element_set_state(playbin, GST_STATE_PLAYING);
-    }
-
-    // Show dialog
-    app->dialog = gtk_message_dialog_new_with_markup(GTK_WINDOW(app->window),
+    app->call_dialog = gtk_message_dialog_new_with_markup(GTK_WINDOW(app->main_window),
         GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT, GTK_MESSAGE_QUESTION, GTK_BUTTONS_YES_NO,
         _("Answer an incoming call from <b>%s</b> ?"), gtk_entry_get_text(GTK_ENTRY(app->entry)));
 
-    gint response = gtk_dialog_run(GTK_DIALOG(app->dialog));
-    gtk_widget_destroy(app->dialog);
-    app->dialog = NULL;
-
-    if(playbin)
-    {
-        // Stop call sound
-        g_source_remove(playbin_watch);
-        gst_element_set_state(playbin, GST_STATE_NULL);
-        gst_object_unref(playbin);
-    }
+    // Show dialog
+    gtk_window_set_urgency_hint(GTK_WINDOW(app->main_window), TRUE);
+    gint response = gtk_dialog_run(GTK_DIALOG(app->call_dialog));
+    gtk_window_set_urgency_hint(GTK_WINDOW(app->main_window), FALSE);
+    gtk_widget_destroy(app->call_dialog);
+    app->call_dialog = NULL;
 
     if(response == GTK_RESPONSE_YES)
     {
-        GstElement *sink_volume = gst_bin_get_by_name(GST_BIN(app->rx_pipeline), "sink_volume");
-        g_object_set(sink_volume, "mute", FALSE, NULL);
+        GstElement *volume = gst_bin_get_by_name(GST_BIN(app->rx_pipeline), "volume");
+        g_object_set(volume, "mute", FALSE, NULL);
+        gst_object_unref(volume);
 
         GstElement *ringback = gst_bin_get_by_name(GST_BIN(app->tx_pipeline), "ringback");
         g_object_set(ringback, "enabled", FALSE, NULL);
+        gst_object_unref(ringback);
     }
-    else call_stop(app->button_stop, app);
+    else call_stop(NULL, app);
 
     return G_SOURCE_REMOVE;
 }
@@ -215,25 +207,28 @@ static gboolean accept_connection(DhtClient *client, const gchar *id, Applicatio
 static void new_connection(DhtClient *client, const gchar *peer_id,
         GSocket *socket, GSocketAddress *sockaddr, GBytes *enc_key, GBytes *dec_key, gboolean remote, Application *app)
 {
-    // Translate ID to alias
-    GtkTreeIter iter;
-    gboolean valid = gtk_tree_model_get_iter_first(GTK_TREE_MODEL(app->completions), &iter);
-    while(valid)
+    if(remote)
     {
-        g_autofree gchar *id = NULL;
-        g_autofree gchar *alias = NULL;
-        gtk_tree_model_get(GTK_TREE_MODEL(app->completions), &iter, 0, &id, 1, &alias, -1);
-        if(strcmp(peer_id, id) == 0)
+        // Translate ID to alias
+        GtkTreeIter iter;
+        gboolean valid = gtk_tree_model_get_iter_first(GTK_TREE_MODEL(app->completions), &iter);
+        while(valid)
         {
-            gtk_entry_set_text(GTK_ENTRY(app->entry), alias);
-            break;
+            g_autofree gchar *id = NULL;
+            g_autofree gchar *alias = NULL;
+            gtk_tree_model_get(GTK_TREE_MODEL(app->completions), &iter, 0, &id, 1, &alias, -1);
+            if(strcmp(peer_id, id) == 0)
+            {
+                gtk_entry_set_text(GTK_ENTRY(app->entry), alias);
+                break;
+            }
+
+            valid = gtk_tree_model_iter_next(GTK_TREE_MODEL(app->completions), &iter);
         }
 
-        valid = gtk_tree_model_iter_next(GTK_TREE_MODEL(app->completions), &iter);
+        // Display direct ID if no alias was found
+        if(!valid) gtk_entry_set_text(GTK_ENTRY(app->entry), peer_id);
     }
-
-    // Display direct ID if no alias was found
-    if(!valid) gtk_entry_set_text(GTK_ENTRY(app->entry), peer_id);
 
     // Start receiver
     app->rx_pipeline = gst_pipeline_new("rx_pipeline");
@@ -258,12 +253,11 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     GstElement *audio_depay = gst_element_factory_make("rtpopusdepay", "audio_depay");
     GstElement *audio_dec = gst_element_factory_make("opusdec", "audio_dec");
     GstElement *audio_sink = gst_element_factory_make("autoaudiosink", "audio_sink");
+    GstElement *volume = gst_element_factory_make("volume", "volume");
+    g_object_set(volume, "mute", remote, NULL);
 
-    GstElement *sink_volume = gst_element_factory_make("volume", "sink_volume");
-    g_object_set(sink_volume, "mute", remote, NULL);
-
-    gst_bin_add_many(GST_BIN(app->rx_pipeline), rtp_src, rtp_dec, rtp_buf, audio_depay, audio_dec, sink_volume, audio_sink, NULL);
-    gst_element_link_many(rtp_src, rtp_dec, rtp_buf, audio_depay, audio_dec, sink_volume, audio_sink, NULL);
+    gst_bin_add_many(GST_BIN(app->rx_pipeline), rtp_src, rtp_dec, rtp_buf, audio_depay, audio_dec, volume, audio_sink, NULL);
+    gst_element_link_many(rtp_src, rtp_dec, rtp_buf, audio_depay, audio_dec, volume, audio_sink, NULL);
     gst_debug_bin_to_dot_file_with_ts(GST_BIN(app->rx_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "start-rx-pipeline");
     gst_element_set_state(app->rx_pipeline, GST_STATE_PLAYING);
 
@@ -298,31 +292,319 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     // Show windows
     if(remote) g_idle_add((GSourceFunc)dialog_run, app);
     gtk_widget_set_sensitive(app->button_stop, TRUE);
-    if(!gtk_widget_get_visible(app->window))
-        gtk_widget_show(app->window);
+    if(!gtk_widget_get_visible(app->main_window))
+        gtk_widget_show(app->main_window);
 }
 
 static void on_error(DhtClient *client, const gchar *id, GError *error, Application *app)
 {
-    gtk_widget_set_sensitive(app->button_start, TRUE);
     g_message("%s %s", id, error->message);
+    call_stop(NULL, app);
 }
 
 static void window_toggle(GtkWidget *widget, Application *app)
 {
-    if(!gtk_widget_get_visible(app->window))
-        gtk_widget_show(app->window);
+    if(!gtk_widget_get_visible(app->main_window))
+        gtk_widget_show(app->main_window);
     else
-        gtk_widget_hide(app->window);
+        gtk_widget_hide(app->main_window);
 }
 
-static void show_about(GtkWidget *widget, Application *app)
+static void completion_update(Application *app)
+{
+    GtkTextIter start;
+    gtk_text_buffer_get_start_iter(app->aliases, &start);
+
+    GtkTextIter end = start;
+    while(!gtk_text_iter_is_end(&start))
+    {
+        gtk_text_iter_forward_line(&end);
+
+        GtkTextIter mark = start;
+        gtk_text_iter_forward_chars(&mark, DHT_ID_LENGTH);
+        if(gtk_text_iter_compare(&mark, &end) < 0)
+        {
+            g_autofree gchar *id = gtk_text_iter_get_text(&start, &mark);
+            g_autofree gchar *alias = gtk_text_iter_get_text(&mark, &end);
+            g_strstrip(alias);
+
+            if((id[DHT_ID_LENGTH - 1] == '=') && (strlen(alias) > 0))
+            {
+                GtkTreeIter iter;
+                gtk_list_store_append(app->completions, &iter);
+                gtk_list_store_set(app->completions, &iter, 0, id, 1, alias, -1);
+            }
+        }
+
+        start = end;
+    }
+}
+
+static void editor_destroy(GtkWidget *widget, Application *app)
+{
+    app->editor_window = NULL;
+}
+
+static void editor_save(GtkWidget *widget, Application *app)
+{
+    if(gtk_text_buffer_get_modified(app->aliases))
+    {
+        gtk_list_store_clear(app->completions);
+        completion_update(app);
+
+        GtkTextIter start, end;
+        gtk_text_buffer_get_start_iter(app->aliases, &start);
+        gtk_text_buffer_get_end_iter(app->aliases, &end);
+
+        g_autoptr(GError) error = NULL;
+        g_autofree gchar *aliases_data = gtk_text_iter_get_slice(&start, &end);
+        if(g_file_set_contents(app->aliases_file, aliases_data, -1, &error))
+            gtk_text_buffer_set_modified(app->aliases, FALSE);
+        else
+            g_warning("%s", error->message);
+    }
+
+    gtk_widget_destroy(app->editor_window);
+}
+
+static void editor_show(GtkWidget *widget, GtkEntryIconPosition icon_pos, GdkEvent *event, Application *app)
+{
+    if(app->editor_window) return;
+
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+
+    GtkWidget *textview = gtk_text_view_new_with_buffer(app->aliases);
+    PangoFontDescription *font = pango_font_description_from_string("monospace");
+    gtk_widget_override_font(textview, font);
+    pango_font_description_free(font);
+
+    GtkWidget *scrolledwindow = gtk_scrolled_window_new(NULL, NULL);
+    gtk_container_add(GTK_CONTAINER(scrolledwindow), textview);
+    gtk_box_pack_start(GTK_BOX(vbox), scrolledwindow, TRUE, TRUE, 0);
+
+    GtkWidget *button = gtk_button_new_with_label(_("Save changes"));
+    g_signal_connect(button, "clicked", (GCallback)editor_save, app);
+
+    GtkWidget *hbox = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL);
+    g_object_set(hbox, "halign", GTK_ALIGN_END, "margin", 5, NULL);
+    gtk_container_add(GTK_CONTAINER(hbox), button);
+    gtk_box_pack_end(GTK_BOX(vbox), hbox, FALSE, TRUE, 0);
+
+    app->editor_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    g_signal_connect(app->editor_window, "destroy", (GCallback)editor_destroy, app);
+    g_object_set(app->editor_window, "icon-name", "accessories-text-editor", "title", _("Nanotalk aliases"), NULL);
+    gtk_window_set_default_size(GTK_WINDOW(app->editor_window), 500, 300);
+    gtk_container_add(GTK_CONTAINER(app->editor_window), vbox);
+    gtk_widget_show_all(app->editor_window);
+}
+
+static gboolean config_update(Application *app)
+{
+    if(app->config_window)
+    {
+        g_autoptr(GDateTime) last_seen = NULL;
+        guint64 bytes_received = 0, packets_received = 0;
+        guint64 bytes_sent = 0, packets_sent = 0;
+        guint peers = 0;
+
+        g_object_get(app->client,
+            "last-seen", &last_seen,
+            "bytes-received", &bytes_received,
+            "packets-received", &packets_received,
+            "bytes-sent", &bytes_sent,
+            "packets-sent", &packets_sent,
+            "peers", &peers,
+            NULL);
+
+        if(last_seen)
+        {
+            g_autofree gchar *last_seen_str = g_date_time_format(last_seen, "%c");
+            gtk_label_set_text(GTK_LABEL(app->label_last_seen), last_seen_str);
+        }
+
+        g_autofree gchar *received_str = g_strdup_printf("%s (%lu %s)",
+                g_format_size(bytes_received), packets_received, ngettext("packet", "packets", packets_received));
+
+        g_autofree gchar *sent_str = g_strdup_printf("%s (%lu %s)",
+                g_format_size(bytes_sent), packets_sent, ngettext("packet", "packets", packets_sent));
+
+        g_autofree gchar *peers_str = g_strdup_printf("%u", peers);
+
+        gtk_label_set_text(GTK_LABEL(app->label_received), received_str);
+        gtk_label_set_text(GTK_LABEL(app->label_sent), sent_str);
+        gtk_label_set_text(GTK_LABEL(app->label_peers), peers_str);
+        return G_SOURCE_CONTINUE;
+    }
+
+    return G_SOURCE_REMOVE;
+}
+
+static void config_apply(GtkWidget *widget, Application *app)
+{
+    g_autoptr(GError) error = NULL;
+    gboolean enable_ipv6 = gtk_switch_get_active(GTK_SWITCH(app->switch_ipv6));
+    guint16 local_port = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(app->spin_local_port));
+    const gchar* bootstrap_host = gtk_entry_get_text(GTK_ENTRY(app->entry_bootstrap_host));
+    guint16 bootstrap_port = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(app->spin_bootstrap_port));
+
+    if((enable_ipv6 != g_key_file_get_boolean(app->config, "nanotalk", "enable-ipv6", NULL)) ||
+       (local_port != g_key_file_get_integer(app->config, "nanotalk", "local-port", NULL)))
+    {
+        g_autoptr(GBytes) key = NULL;
+        g_object_get(app->client, "key", &key, NULL);
+        g_object_unref(app->client);
+
+        // Create new client
+        app->client = dht_client_new(enable_ipv6 ? G_SOCKET_FAMILY_IPV6 : G_SOCKET_FAMILY_IPV4, local_port, key, &error);
+        if(!app->client) g_error("%s", error->message);
+
+        g_signal_connect(app->client, "accept-connection", (GCallback)accept_connection, app);
+        g_signal_connect(app->client, "new-connection", (GCallback)new_connection, app);
+        g_signal_connect(app->client, "on-error", (GCallback)on_error, app);
+    }
+
+    if(bootstrap_host[0] && bootstrap_port)
+        dht_client_bootstrap(app->client, bootstrap_host, bootstrap_port);
+
+    // Save configuration
+    g_key_file_set_boolean(app->config, "nanotalk", "enable-ipv6", enable_ipv6);
+    g_key_file_set_integer(app->config, "nanotalk", "local-port", local_port);
+    g_key_file_set_string(app->config, "nanotalk", "bootstrap-host", bootstrap_host);
+    g_key_file_set_integer(app->config, "nanotalk", "bootstrap-port", bootstrap_port);
+    if(!g_key_file_save_to_file(app->config, app->config_file, &error))
+        g_warning("%s", error->message);
+}
+
+static void config_destroy(GtkWidget *widget, Application *app)
+{
+    app->label_id = NULL;
+    app->label_last_seen = NULL;
+    app->label_received = NULL;
+    app->label_sent = NULL;
+    app->label_peers = NULL;
+    app->switch_ipv6 = NULL;
+    app->spin_local_port = NULL;
+    app->entry_bootstrap_host = NULL;
+    app->spin_bootstrap_port = NULL;
+    app->config_window = NULL;
+}
+
+static void config_show(GtkWidget *widget, Application *app)
+{
+    if(app->config_window) return;
+
+    app->config_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    g_signal_connect(app->config_window, "destroy", (GCallback)config_destroy, app);
+    g_object_set(app->config_window, "icon-name", "preferences-desktop", "title", _("Nanotalk configuration"), "resizable", FALSE, NULL);
+
+    GtkWidget *grid = gtk_grid_new();
+    g_object_set(grid, "column-spacing", 10, "row-spacing", 5, "margin", 10, NULL);
+    gtk_container_add(GTK_CONTAINER(app->config_window), grid);
+
+    g_autofree gchar *id = NULL;
+    g_object_get(app->client, "id", &id, NULL);
+    g_autofree gchar *id_markup = g_strconcat("<b>", id, "</b>", NULL);
+
+    // Status area
+    GtkWidget *label = gtk_label_new(_("Client ID"));
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 0, 1, 1);
+    app->label_id = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(app->label_id), id_markup);
+    gtk_label_set_selectable(GTK_LABEL(app->label_id), TRUE);
+    gtk_widget_set_can_focus(app->label_id, FALSE);
+    gtk_grid_attach(GTK_GRID(grid), app->label_id, 1, 0, 1, 1);
+
+    label = gtk_label_new(_("Last seen"));
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 1, 1, 1);
+    app->label_last_seen = gtk_label_new(NULL);
+    gtk_grid_attach(GTK_GRID(grid), app->label_last_seen, 1, 1, 1, 1);
+
+    label = gtk_label_new(_("Received"));
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 2, 1, 1);
+    app->label_received = gtk_label_new(NULL);
+    gtk_grid_attach(GTK_GRID(grid), app->label_received, 1, 2, 1, 1);
+
+    label = gtk_label_new(_("Sent"));
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 3, 1, 1);
+    app->label_sent = gtk_label_new(NULL);
+    gtk_grid_attach(GTK_GRID(grid), app->label_sent, 1, 3, 1, 1);
+
+    label = gtk_label_new(_("Peers"));
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 4, 1, 1);
+    app->label_peers = gtk_label_new(NULL);
+    gtk_grid_attach(GTK_GRID(grid), app->label_peers, 1, 4, 1, 1);
+
+    // Configuration area
+    GtkWidget *separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_grid_attach(GTK_GRID(grid), separator, 0, 5, 2, 1);
+
+    gboolean enable_ipv6 = g_key_file_get_boolean(app->config, "nanotalk", "enable-ipv6", NULL);
+    guint16 local_port = g_key_file_get_integer(app->config, "nanotalk", "local-port", NULL);
+    g_autofree gchar* bootstrap_host = g_key_file_get_string(app->config, "nanotalk", "bootstrap-host", NULL);
+    guint16 bootstrap_port = g_key_file_get_integer(app->config, "nanotalk", "bootstrap-port", NULL);
+
+    label = gtk_label_new(_("Enable IPv6"));
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 6, 1, 1);
+    GtkWidget *box = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_button_box_set_layout(GTK_BUTTON_BOX(box), GTK_BUTTONBOX_END);
+    gtk_grid_attach(GTK_GRID(grid), box, 0, 6, 2, 1);
+    app->switch_ipv6 = gtk_switch_new();
+    gtk_switch_set_active(GTK_SWITCH(app->switch_ipv6), enable_ipv6);
+    gtk_container_add(GTK_CONTAINER(box), app->switch_ipv6);
+
+    label = gtk_label_new(_("Local port"));
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 7, 1, 1);
+    app->spin_local_port = gtk_spin_button_new_with_range(0, G_MAXUINT16, 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_local_port), local_port);
+    gtk_grid_attach(GTK_GRID(grid), app->spin_local_port, 1, 7, 1, 1);
+
+    label = gtk_label_new(_("Bootstrap host"));
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 8, 1, 1);
+    app->entry_bootstrap_host = gtk_entry_new();
+    gtk_entry_set_width_chars(GTK_ENTRY(app->entry_bootstrap_host), 30);
+    gtk_entry_set_text(GTK_ENTRY(app->entry_bootstrap_host), bootstrap_host ?: "");
+    gtk_grid_attach(GTK_GRID(grid), app->entry_bootstrap_host, 1, 8, 1, 1);
+
+    label = gtk_label_new(_("Bootstrap port"));
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 9, 1, 1);
+    app->spin_bootstrap_port = gtk_spin_button_new_with_range(0, G_MAXUINT16, 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_bootstrap_port), bootstrap_port);
+    gtk_grid_attach(GTK_GRID(grid), app->spin_bootstrap_port, 1, 9, 1, 1);
+
+    // Buttons
+    box = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_button_box_set_layout(GTK_BUTTON_BOX(box), GTK_BUTTONBOX_END);
+    gtk_grid_attach(GTK_GRID(grid), box, 0, 10, 2, 1);
+    GtkWidget *button = gtk_button_new_with_label(_("Apply"));
+    g_signal_connect(button, "clicked", (GCallback)config_apply, app);
+    gtk_container_add(GTK_CONTAINER(box), button);
+
+    button = gtk_button_new_with_label(_("Close"));
+    g_signal_connect_swapped(button, "clicked", (GCallback)gtk_widget_destroy, app->config_window);
+    gtk_container_add(GTK_CONTAINER(box), button);
+
+    config_update(app);
+    gtk_widget_show_all(app->config_window);
+    g_timeout_add_seconds(1, (GSourceFunc)config_update, app);
+}
+
+static void about_show(GtkWidget *widget, Application *app)
 {
     const gchar *authors[] = { "Martin Jaro\xC5\xA1 <xjaros32@stud.feec.vutbr.cz>", NULL };
     gtk_show_about_dialog(NULL,
         "logo-icon-name", "call-start-symbolic",
+        "program-name", "nanotalk",
         "version", PACKAGE_VERSION,
-        "comments", PACKAGE_NAME,
+        "comments", _("Nanotalk distributed multimedia service"),
         "authors", authors,
         "license-type", GTK_LICENSE_GPL_2_0,
         "website", PACKAGE_URL,
@@ -341,11 +623,8 @@ static gboolean plugin_init(GstPlugin *plugin)
            gst_element_register(plugin, "rtpdecrypt", GST_RANK_NONE, GST_TYPE_RTP_DECRYPT);
 }
 
-gboolean application_init(GError **error)
+static gboolean plugin_register(GError **error)
 {
-    static gboolean initialized = FALSE;
-    if(initialized) return TRUE;
-
     GstRegistry *registry = gst_registry_get();
     if(!gst_registry_check_feature_version(registry, "playbin", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO) ||
        !gst_registry_check_feature_version(registry, "volume", GST_VERSION_MAJOR, GST_VERSION_MINOR, GST_VERSION_MICRO))
@@ -380,7 +659,6 @@ gboolean application_init(GError **error)
         return FALSE;
     }
 
-    initialized = TRUE;
     return TRUE;
 }
 
@@ -390,53 +668,58 @@ void application_add_option_group(GOptionContext *context)
     g_option_context_add_group(context, gst_init_get_option_group());
 }
 
-Application* application_new(DhtClient *client, gboolean ipv6, const gchar *aliases_path, const gchar *sound_file)
+Application* application_new(DhtClient *client, GKeyFile *config, const gchar *config_file, const gchar *aliases_file, GError **error)
 {
+    static gboolean initialized = FALSE;
+    if(!initialized)
+    {
+        if(!plugin_register(error)) return NULL;
+        initialized = TRUE;
+    }
+
     Application *app = g_new0(Application, 1);
-    app->sound_file = g_strdup(sound_file);
+    app->config = g_key_file_ref(config);
+    app->config_file = g_strdup(config_file);
+    app->aliases_file = g_strdup(aliases_file);
 
     app->client = g_object_ref(client);
     g_signal_connect(app->client, "accept-connection", (GCallback)accept_connection, app);
     g_signal_connect(app->client, "new-connection", (GCallback)new_connection, app);
     g_signal_connect(app->client, "on-error", (GCallback)on_error, app);
-    app->family = ipv6 ? G_SOCKET_FAMILY_IPV6 : G_SOCKET_FAMILY_IPV4;
 
+    // Load aliases from file
+    gsize aliases_len = 0;
+    g_autofree gchar *aliases_data = NULL;
+    app->aliases = gtk_text_buffer_new(NULL);
     app->completions = gtk_list_store_new(2, G_TYPE_STRING, G_TYPE_STRING);
-    if(aliases_path)
+    if(g_file_get_contents(aliases_file, &aliases_data, &aliases_len, NULL))
     {
-        // Load aliases from file
-        g_autoptr(GError) error = NULL;
-        g_autoptr(GIOChannel) channel = g_io_channel_new_file(aliases_path, "r", &error);
-        if(!channel) g_warning("Failed to read aliases from %s. %s", aliases_path, error->message);
-        else while(1)
-        {
-            gsize len = 0;
-            g_autofree gchar *str = NULL;
-            GIOStatus status = g_io_channel_read_line(channel, &str, &len, NULL, NULL);
-            if((status == G_IO_STATUS_EOF) || (status == G_IO_STATUS_ERROR)) break;
-            if((status == G_IO_STATUS_NORMAL) && (len > DHT_ID_LENGTH))
-            {
-                // Split into ID and alias, strip trailing whitespace
-                str[DHT_ID_LENGTH] = 0;
-                gchar *end = str + len - 1;
-                while(g_ascii_isspace(*end)) *end-- = 0;
-                if(end > str + DHT_ID_LENGTH)
-                {
-                    GtkTreeIter iter;
-                    gtk_list_store_append(app->completions, &iter);
-                    gtk_list_store_set(app->completions, &iter, 0, str, 1, str + DHT_ID_LENGTH + 1, -1);
-                }
-            }
-        }
+        gtk_text_buffer_set_text(app->aliases, aliases_data, aliases_len);
+        gtk_text_buffer_set_modified(app->aliases, FALSE);
+        completion_update(app);
     }
 
     // Create widgets
     app->entry = gtk_entry_new();
     g_signal_connect(app->entry, "activate", (GCallback)call_toggle, app);
+    g_signal_connect(app->entry, "icon-press", (GCallback)editor_show, app);
+    gtk_entry_set_width_chars(GTK_ENTRY(app->entry), 30);
+    g_object_set(app->entry, "secondary-icon-name", "address-book-new", "secondary-icon-tooltip-text", "Edit aliases", NULL);
+
     app->button_start = gtk_button_new_from_icon_name("call-start", GTK_ICON_SIZE_BUTTON);
     g_signal_connect(app->button_start, "clicked", (GCallback)call_start, app);
+    gtk_widget_set_can_focus(app->button_start, FALSE);
+    gtk_widget_set_hexpand(app->button_start, TRUE);
+
+    app->button_volume = gtk_volume_button_new();
+    g_signal_connect(app->button_volume, "value-changed", (GCallback)volume_changed, app);
+    gtk_scale_button_set_value(GTK_SCALE_BUTTON(app->button_volume), 1.0);
+    gtk_widget_set_can_focus(app->button_volume, FALSE);
+
     app->button_stop = gtk_button_new_from_icon_name("call-stop", GTK_ICON_SIZE_BUTTON);
     g_signal_connect(app->button_stop, "clicked", (GCallback)call_stop, app);
+    gtk_widget_set_can_focus(app->button_stop, FALSE);
+    gtk_widget_set_hexpand(app->button_stop, TRUE);
     gtk_widget_set_sensitive(app->button_stop, FALSE);
 
     // Completion
@@ -448,39 +731,39 @@ Application* application_new(DhtClient *client, gboolean ipv6, const gchar *alia
 
     // Geometry
     GtkWidget *grid = gtk_grid_new();
-    g_object_set(grid, "column-homogeneous", TRUE, "column-spacing", 5, "row-spacing", 5, "margin", 10, NULL);
-    gtk_grid_attach(GTK_GRID(grid), app->entry, 0, 0, 2, 1);
+    g_object_set(grid, "column-spacing", 5, "row-spacing", 5, "margin", 10, NULL);
+    gtk_grid_attach(GTK_GRID(grid), app->entry, 0, 0, 3, 1);
     gtk_grid_attach(GTK_GRID(grid), app->button_start, 0, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), app->button_stop, 1, 1, 1, 1);
-    gtk_widget_show_all(GTK_WIDGET(grid));
+    gtk_grid_attach(GTK_GRID(grid), app->button_volume, 1, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), app->button_stop, 2, 1, 1, 1);
 
     // Main window
-    app->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    g_signal_connect(app->window, "delete-event", (GCallback)gtk_widget_hide_on_delete, NULL);
-    g_object_set(app->window, "icon-name", "call-start-symbolic", "title", "Nanotalk", "resizable", FALSE, NULL);
-    gtk_container_add(GTK_CONTAINER(app->window), GTK_WIDGET(grid));
+    app->main_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    g_signal_connect(app->main_window, "delete-event", (GCallback)gtk_widget_hide_on_delete, NULL);
+    g_object_set(app->main_window, "icon-name", "call-start-symbolic", "title", "Nanotalk", "resizable", FALSE, NULL);
+    gtk_container_add(GTK_CONTAINER(app->main_window), grid);
+    gtk_widget_show_all(GTK_WIDGET(app->main_window));
 
     // Status icon menu
+    GtkWidget *menu_item, *image;
     app->menu = gtk_menu_new();
 
-    GtkWidget *menu_item = gtk_menu_item_new();
-    g_signal_connect(menu_item, "activate", (GCallback)show_about, app);
-    GtkWidget *menu_icon = gtk_image_new_from_icon_name("help-about", GTK_ICON_SIZE_MENU);
-    GtkWidget *menu_label = gtk_label_new(_("About"));
-    GtkWidget *menu_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    gtk_container_add(GTK_CONTAINER(menu_box), menu_icon);
-    gtk_container_add(GTK_CONTAINER(menu_box), menu_label);
-    gtk_container_add(GTK_CONTAINER(menu_item), menu_box);
+    image = gtk_image_new_from_icon_name("preferences-desktop", GTK_ICON_SIZE_MENU);
+    menu_item = gtk_image_menu_item_new_with_label(_("Preferences"));
+    g_signal_connect(menu_item, "activate", (GCallback)config_show, app);
+    gtk_image_menu_item_set_image(GTK_IMAGE_MENU_ITEM(menu_item), image);
     gtk_menu_shell_append(GTK_MENU_SHELL(app->menu), menu_item);
 
-    menu_item = gtk_menu_item_new();
-    g_signal_connect(menu_item, "activate", (GCallback)gtk_main_quit, NULL);
-    menu_icon = gtk_image_new_from_icon_name("application-exit", GTK_ICON_SIZE_MENU);
-    menu_label = gtk_label_new(_("Quit"));
-    menu_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    gtk_container_add(GTK_CONTAINER(menu_box), menu_icon);
-    gtk_container_add(GTK_CONTAINER(menu_box), menu_label);
-    gtk_container_add(GTK_CONTAINER(menu_item), menu_box);
+    image = gtk_image_new_from_icon_name("help-about", GTK_ICON_SIZE_MENU);
+    menu_item = gtk_image_menu_item_new_with_label(_("About"));
+    g_signal_connect(menu_item, "activate", (GCallback)about_show, app);
+    gtk_image_menu_item_set_image(GTK_IMAGE_MENU_ITEM(menu_item), image);
+    gtk_menu_shell_append(GTK_MENU_SHELL(app->menu), menu_item);
+
+    image = gtk_image_new_from_icon_name("application-exit", GTK_ICON_SIZE_MENU);
+    menu_item = gtk_image_menu_item_new_with_label(_("Quit"));
+    g_signal_connect(menu_item, "activate", (GCallback)gtk_main_quit, app);
+    gtk_image_menu_item_set_image(GTK_IMAGE_MENU_ITEM(menu_item), image);
     gtk_menu_shell_append(GTK_MENU_SHELL(app->menu), menu_item);
 
     gtk_widget_show_all(app->menu);
@@ -495,15 +778,23 @@ Application* application_new(DhtClient *client, gboolean ipv6, const gchar *alia
 void application_free(Application *app)
 {
     if(gtk_widget_is_sensitive(app->button_stop))
-        call_stop(app->button_stop, app);
+        call_stop(NULL, app);
 
-    gtk_widget_destroy(app->window);
+    if(app->editor_window)
+        gtk_widget_destroy(app->editor_window);
+
+    if(app->config_window)
+        gtk_widget_destroy(app->config_window);
+
+    gtk_widget_destroy(app->main_window);
     gtk_widget_destroy(app->menu);
     g_object_unref(app->status_icon);
     g_object_unref(app->completions);
+    g_object_unref(app->aliases);
     g_object_unref(app->client);
-
-    g_free(app->sound_file);
+    g_key_file_unref(app->config);
+    g_free(app->config_file);
+    g_free(app->aliases_file);
     g_free(app);
 }
 

@@ -23,73 +23,31 @@ static Application *application = NULL;
 
 #include <glib/gi18n.h>
 #include <locale.h>
+#include <stdlib.h>
 #include "dhtclient.h"
 
 #define DEFAULT_PORT 5004
 
-#ifdef G_OS_UNIX
-#include <glib-unix.h>
-
-// Called for SIGUSR1
-static gboolean print_stats(DhtClient *client)
-{
-    guint peers = 0;
-    g_autoptr(GDateTime) last_seen = NULL;
-    guint64 bytes_received = 0, packets_received = 0;
-    guint64 bytes_sent = 0, packets_sent = 0;
-    g_object_get(client,
-            "peers", &peers,
-            "last-seen", &last_seen,
-            "bytes-received", &bytes_received,
-            "packets-received", &packets_received,
-            "bytes-sent", &bytes_sent,
-            "packets-sent", &packets_sent,
-            NULL);
-
-    // Print statistics
-    g_autofree gchar *last_seen_str = g_date_time_format(last_seen, "%c");
-    g_autofree gchar *bytes_received_str = g_format_size(bytes_received);
-    g_autofree gchar *bytes_sent_str = g_format_size(bytes_sent);
-    g_print("\n%s: %u\n%s: %s\n%s: %s (%lu %s)\n%s: %s (%lu %s)\n",
-            _("Peers"), peers,
-            _("Last seen"), last_seen_str,
-            _("Received"), bytes_received_str, packets_received, ngettext("packet", "packets", packets_received),
-            _("Sent"), bytes_sent_str, packets_sent, ngettext("packet", "packets", packets_sent));
-
-    return G_SOURCE_CONTINUE;
-}
-
-#endif /* G_OS_UNIX */
+#define CONFIG_FILE     "user.cfg"
+#define KEY_FILE        "user.key"
+#define ALIASES_FILE    "aliases.txt"
 
 static gboolean startup(int *argc, char ***argv, GError **error)
 {
-    g_autoptr(GBytes) key = NULL;
-    g_autofree gchar *key_path = NULL;
-    g_autofree gchar *bootstrap_host = NULL;
-    gint bootstrap_port = DEFAULT_PORT;
-    gint local_port = DEFAULT_PORT;
-    gboolean ipv6 = FALSE;
-    gboolean version = FALSE;
-
-#ifdef ENABLE_GUI
-    g_autofree gchar *aliases_path = NULL;
-    g_autofree gchar *sound_file = NULL;
-#endif /* ENABLE_GUI */
-
+    gboolean print_version = FALSE;
+    g_autofree gchar *config_file = NULL;
+    g_autofree gchar *key_file = NULL;
+    g_autofree gchar *aliases_file = NULL;
     GOptionEntry options[] =
     {
-        { "ipv6", '6', 0, G_OPTION_ARG_NONE, &ipv6, N_("Enable IPv6"), NULL },
-        { "key", 'k', 0, G_OPTION_ARG_FILENAME, &key_path, N_("Private key"), "FILE" },
-        { "local-port", 'l', 0, G_OPTION_ARG_INT, &local_port, N_("Source port"), "NUM" },
-        { "bootstrap-host", 'h', 0, G_OPTION_ARG_STRING, &bootstrap_host, N_("Bootstrap address"), "ADDR" },
-        { "bootstrap-port", 'p', 0, G_OPTION_ARG_INT, &bootstrap_port, N_("Bootstrap port"), "NUM" },
+        { "version", 'v', 0, G_OPTION_ARG_NONE, &print_version, N_("Print program version"), NULL },
+        { "config", 'c', 0, G_OPTION_ARG_FILENAME, &config_file, N_("Configuration file"), _("FILE") },
+        { "key", 'k', 0, G_OPTION_ARG_FILENAME, &key_file, N_("Private key"), _("FILE") },
 
 #ifdef ENABLE_GUI
-        { "aliases", 'a', 0, G_OPTION_ARG_FILENAME, &aliases_path, N_("List of aliases"), "FILE" },
-        { "call-sound", 's', 0, G_OPTION_ARG_STRING, &sound_file, N_("Incoming call sound"), "FILE" },
+        { "aliases", 'a', 0, G_OPTION_ARG_FILENAME, &aliases_file, N_("List of aliases"), _("FILE") },
 #endif /* ENABLE_GUI */
 
-        { "version", 'V', 0, G_OPTION_ARG_NONE, &version, N_("Print program version"), NULL },
         { NULL }
     };
 
@@ -102,7 +60,7 @@ static gboolean startup(int *argc, char ***argv, GError **error)
 
     g_autoptr(GOptionContext) context = g_option_context_new(NULL);
     g_option_context_add_main_entries(context, options, PACKAGE);
-    g_option_context_set_summary(context, PACKAGE_STRING);
+    g_option_context_set_summary(context, _("Nanotalk distributed multimedia service"));
     g_option_context_set_description(context, PACKAGE_BUGREPORT "\n" PACKAGE_URL);
 
 #ifdef ENABLE_GUI
@@ -112,50 +70,72 @@ static gboolean startup(int *argc, char ***argv, GError **error)
     if(!g_option_context_parse(context, argc, argv, error))
         return FALSE;
 
-    if(version)
+    if(print_version)
     {
         // Print program version
         g_print(PACKAGE " " VERSION "\n");
         exit(EXIT_SUCCESS);
     }
 
-#ifdef ENABLE_GUI
-    if(!application_init(error))
-        return FALSE;
-#endif /* ENABLE_GUI */
+    // Set default paths
+    g_autofree gchar *path = g_build_filename(g_get_home_dir(), ".nanotalk", NULL);
+    g_mkdir_with_parents(path, 0775);
 
-    if(key_path)
+    if(!config_file) config_file = g_build_filename(path, CONFIG_FILE, NULL);
+    if(!key_file) key_file = g_build_filename(path, KEY_FILE, NULL);
+    if(!aliases_file) aliases_file = g_build_filename(path, ALIASES_FILE, NULL);
+
+    // Load configuration file
+    g_autoptr(GKeyFile) config = g_key_file_new();
+    if(!g_key_file_load_from_file(config, config_file, G_KEY_FILE_KEEP_COMMENTS, NULL))
     {
-        // Load key from file
-        g_autoptr(GFile) file = g_file_new_for_path(key_path);
-        gsize len = DHT_KEY_SIZE;
-        guint8 buffer[len];
-
-        g_autoptr(GInputStream) stream = G_INPUT_STREAM(g_file_read(file, NULL, error));
-        if(!stream || !g_input_stream_read_all(stream, buffer, sizeof(buffer), &len, NULL, error))
-            return FALSE;
-
-        key = g_bytes_new(buffer, len);
+        // Save default configuration
+        g_key_file_set_boolean(config, "nanotalk", "enable-ipv6", FALSE);
+        g_key_file_set_integer(config, "nanotalk", "local-port", DEFAULT_PORT);
+        g_key_file_set_string(config, "nanotalk", "bootstrap-host", "");
+        g_key_file_set_integer(config, "nanotalk", "bootstrap-port", DEFAULT_PORT);
+        g_key_file_save_to_file(config, config_file, NULL);
     }
 
-    // Create client and bootstrap
-    DhtClient *client = dht_client_new(ipv6 ? G_SOCKET_FAMILY_IPV6 : G_SOCKET_FAMILY_IPV4, local_port, key, error);
-    if(!client) return FALSE;
+    gboolean enable_ipv6 = g_key_file_get_boolean(config, "nanotalk", "enable-ipv6", NULL);
+    guint16 local_port = g_key_file_get_integer(config, "nanotalk", "local-port", NULL);
+    g_autofree gchar* bootstrap_host = g_key_file_get_string(config, "nanotalk", "bootstrap-host", NULL);
+    guint16 bootstrap_port = g_key_file_get_integer(config, "nanotalk", "bootstrap-port", NULL);
+    g_autoptr(DhtClient) client = NULL;
 
-    if(bootstrap_host && bootstrap_port)
+    // Load key from file
+    gsize key_len = 0;
+    g_autofree gchar *key_data = NULL;
+    if(g_file_get_contents(key_file, &key_data, &key_len, NULL))
+    {
+        // Use existing key
+        g_autoptr(GBytes) key = g_bytes_new(key_data, key_len);
+        client = dht_client_new(enable_ipv6 ? G_SOCKET_FAMILY_IPV6 : G_SOCKET_FAMILY_IPV4, local_port, key, error);
+        if(!client) return FALSE;
+    }
+    else
+    {
+        // Generate new key
+        client = dht_client_new(enable_ipv6 ? G_SOCKET_FAMILY_IPV6 : G_SOCKET_FAMILY_IPV4, local_port, NULL, error);
+        if(!client) return FALSE;
+
+        g_autoptr(GBytes) key = NULL;
+        g_object_get(client, "key", &key, NULL);
+        gconstpointer key_data = g_bytes_get_data(key, &key_len);
+
+        // Save to file
+        if(!g_file_set_contents(key_file, key_data, key_len, error))
+            return FALSE;
+    }
+
+    if(bootstrap_host && bootstrap_host[0] && bootstrap_port)
         dht_client_bootstrap(client, bootstrap_host, bootstrap_port);
 
-    g_autofree gchar *id = NULL;
-    g_object_get(client, "id", &id, NULL);
-    g_print(_("Client ID %s\n"), id);
-
-#ifdef G_OS_UNIX
-    g_unix_signal_add(SIGUSR1, (GSourceFunc)print_stats, client);
-#endif /* G_OS_UNIX */
-
 #ifdef ENABLE_GUI
-    application = application_new(client, ipv6, aliases_path, sound_file);
-    g_object_unref(client);
+    application = application_new(client, config, config_file, aliases_file, error);
+    if(!application) return FALSE;
+#else
+    g_object_ref(client); // keep client alive
 #endif /* ENABLE_GUI */
 
     return TRUE;

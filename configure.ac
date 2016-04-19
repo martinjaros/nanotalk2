@@ -1,5 +1,4 @@
-AC_INIT([Nanotalk distributed multimedia service], [2.0.1],
-[xjaros32@stud.feec.vutbr.cz], [nanotalk], [https://github.com/martinjaros/nanotalk2])
+AC_INIT([Nanotalk], [2.0.1], [xjaros32@stud.feec.vutbr.cz], [nanotalk], [https://github.com/martinjaros/nanotalk2])
 
 AM_INIT_AUTOMAKE
 AC_PROG_CC([gcc])

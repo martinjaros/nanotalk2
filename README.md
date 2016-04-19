@@ -1,15 +1,11 @@
 Nanotalk distributed multimedia service
 =======================================
 
-This is a simple, distributed voice client for Linux desktop.
+This is a simple, distributed voice client.
 It can be used for simple calls between nodes;
 the peer node is specified by its ID (or an alias you assigned to this ID).
 The client will search the network by querying nodes it already knows and once the target node is found,
 an encrypted audio stream is created.
-
-I made this project out of pure interest in the topic mostly for demonstration purposes.
-If you actually want to use it practically there is a need for better GUI and more features,
-but feel free to use this project or its parts for your own application.
 
 Build and install
 ---------------------------------------
@@ -34,23 +30,20 @@ If you want to build a server without GTK+ and GStreamer use `./confifure --disa
 Running
 ---------------------------------------
 
-First, you need a private key, which is a 32-byte random sequence
+Upon first startup a new key is generated and saved together with default configuration to
 
-    dd if=/dev/random of=/path/to/private.key bs=32 count=1 iflag=fullblock
+    $HOME/.nanotalk/user.cfg
+    $HOME/.nanotalk/user.key
+    $HOME/.nanotalk/aliases.txt
+
+These paths may be optionally overridden from the command line, see `nanotalk --help`.
 
 An unique ID is assigned to each key.
-To find out what ID does your key have, run the client and check the console output.
-You may create a text file with list of aliases for IDs you know. For example
+You may create a list of aliases for IDs you know. For example
 
     Eq2dQfYkQU17HY7A5N4k0TFJBuU= Name of this node
     L+XtSrI1bBehyOppis7FCvvnw9U= Another name
 
-In order to use the client it must be bootstrapped to a live node specified either by hostname or address
-
-    nanotalk -k /path/to/private.key -a /path/to/aliases.txt -h 192.168.0.1
-
+In order to use the client it must be bootstrapped to a live node specified either by hostname or address.
 To make the client work behind NAT you need to either enable "full-cone" if the router supports it
-or setup UDP port forwarding. The default port is **5004**.
-
-The client can play a sound file to indicate an incoming call; use the `--call-sound` option.
-For more options see `nanotalk --help`.
+or setup UDP port forwarding.
