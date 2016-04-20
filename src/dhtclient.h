@@ -97,7 +97,6 @@ DhtClient* dht_client_new(GSocketFamily family, guint16 port, GBytes *key, GErro
  * @client: Object instance
  * @host: Hostname or address
  * @port: Destination port
- * @error: (allow-none): Output location for synchronous errors
  *
  * Bootstraps the client by sending a request to the specified address, this is necessary in order to join the distributed network.
  * This method may be called repeatedly, the #DhtClient:peers property will hold the number of peers found.
@@ -106,7 +105,7 @@ DhtClient* dht_client_new(GSocketFamily family, guint16 port, GBytes *key, GErro
  *
  * Returns: %TRUE on success
  */
-gboolean dht_client_bootstrap(DhtClient *client, const gchar *host, guint16 port, GError **error);
+void dht_client_bootstrap(DhtClient *client, const gchar *host, guint16 port);
 
 /**
  * dht_client_lookup:

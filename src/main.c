@@ -142,8 +142,8 @@ static gboolean startup(int *argc, char ***argv, GError **error)
     DhtClient *client = dht_client_new(ipv6 ? G_SOCKET_FAMILY_IPV6 : G_SOCKET_FAMILY_IPV4, local_port, key, error);
     if(!client) return FALSE;
 
-    if(bootstrap_host && bootstrap_port && !dht_client_bootstrap(client, bootstrap_host, bootstrap_port, error))
-        return FALSE;
+    if(bootstrap_host && bootstrap_port)
+        dht_client_bootstrap(client, bootstrap_host, bootstrap_port);
 
     g_autofree gchar *id = NULL;
     g_object_get(client, "id", &id, NULL);

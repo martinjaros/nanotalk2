@@ -76,6 +76,7 @@ typedef struct _msg_lookup MsgLookup;
 typedef struct _msg_connection_request MsgConnectionRequest;
 typedef struct _msg_connection_response MsgConnectionResponse;
 
+typedef struct _dht_resolvable DhtResolvable;
 typedef struct _dht_node DhtNode;
 typedef struct _dht_bucket DhtBucket;
 typedef struct _dht_query DhtQuery;
@@ -116,6 +117,12 @@ struct _msg_connection_response
     guint8 peer_nonce[DHT_NONCE_SIZE];
 }
 __attribute__((packed));
+
+struct _dht_resolvable
+{
+    DhtClient *parent;
+    guint16 port;
+};
 
 struct _dht_node
 {
@@ -184,6 +191,7 @@ struct _dht_client_private
     GSocket *socket;
     GSocketFamily family; // G_SOCKET_FAMILY_IPV4 or G_SOCKET_FAMILY_IPV6
     guint io_source, timeout_source; // GSource ID within default context
+    GCancellable *cancellable;
 
     // Statistics
     GTimeVal last_seen;
@@ -204,6 +212,8 @@ static gboolean dht_client_refresh(gpointer arg);
 static gboolean dht_client_receive(GSocket *socket, GIOCondition condition, gpointer arg);
 static void dht_client_update(DhtClient *client, gconstpointer id, gboolean is_alive, gconstpointer addr, guint16 port);
 static gsize dht_client_search(DhtClient *client, gconstpointer id, gpointer node_ptr);
+
+static void dht_resolver_finish(GObject *resolver, GAsyncResult *result, gpointer arg);
 
 static gboolean dht_query_timeout(gpointer arg);
 static void dht_query_destroy(gpointer arg);
@@ -409,6 +419,7 @@ static void dht_client_init(DhtClient *client)
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
     priv->lookup_table = g_hash_table_new_full(dht_id_hash, dht_id_equal, NULL, dht_lookup_destroy);
     priv->connection_table = g_hash_table_new_full(dht_nonce_hash, dht_nonce_equal, NULL, dht_connection_destroy);
+    priv->cancellable = g_cancellable_new();
     priv->key_size = DHT_KEY_SIZE;
 }
 
@@ -432,64 +443,19 @@ DhtClient* dht_client_new(GSocketFamily family, guint16 port, GBytes *key, GErro
     return g_object_new(DHT_TYPE_CLIENT, "key", key, "socket", socket, NULL);
 }
 
-gboolean dht_client_bootstrap(DhtClient *client, const gchar *host, guint16 port, GError **error)
+void dht_client_bootstrap(DhtClient *client, const gchar *host, guint16 port)
 {
-    g_return_val_if_fail(DHT_IS_CLIENT(client), FALSE);
-    g_return_val_if_fail(host != NULL, FALSE);
+    g_return_if_fail(DHT_IS_CLIENT(client));
+    g_return_if_fail(host != NULL);
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
 
-    // Resolve host
-    g_autoptr(GSocketAddress) sockaddr = NULL;
+    DhtResolvable *resolvable = g_new0(DhtResolvable, 1);
+    resolvable->parent = client;
+    resolvable->port = port;
+
+    // Start resolver
     g_autoptr(GResolver) resolver = g_resolver_get_default();
-    GList *list = g_resolver_lookup_by_name(resolver, host, NULL, error);
-    if(!list) return FALSE;
-
-    GList *item;
-    for(item = list; item; item = item->next)
-    {
-        // Filter out correct address family
-        GInetAddress *in_addr = G_INET_ADDRESS(item->data);
-        if(g_inet_address_get_family(in_addr) == priv->family)
-        {
-            sockaddr = g_inet_socket_address_new(in_addr, port);
-            break;
-        }
-    }
-    g_resolver_free_addresses(list);
-
-    if(sockaddr)
-    {
-        DhtLookup *lookup = g_hash_table_lookup(priv->lookup_table, priv->id);
-        if(!lookup)
-        {
-            // Create lookup
-            lookup = g_new0(DhtLookup, 1);
-            memcpy(lookup->id, priv->id, DHT_HASH_SIZE);
-            lookup->parent = client;
-            lookup->queries = g_sequence_new(dht_query_destroy);
-            lookup->bootstrap_source = g_timeout_add(DHT_TIMEOUT_MS, dht_lookup_timeout, lookup);
-            g_hash_table_insert(priv->lookup_table, lookup->id, lookup);
-            g_debug("bootstrapping");
-        }
-
-        // Send request
-        MsgLookup msg;
-        msg.type = MSG_TYPE(priv->family) | MSG_LOOKUP_REQ;
-        memcpy(msg.srcid, priv->id, DHT_HASH_SIZE);
-        memcpy(msg.dstid, priv->id, DHT_HASH_SIZE);
-        gssize res = g_socket_send_to(priv->socket, sockaddr, (gchar*)&msg, sizeof(msg), NULL, error);
-        if(res >= 0)
-        {
-            priv->packets_sent++;
-            priv->bytes_sent += res;
-            return TRUE;
-        }
-
-        return FALSE;
-    }
-
-    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE, _("Unknown host"));
-    return FALSE;
+    g_resolver_lookup_by_name_async(resolver, host, priv->cancellable, dht_resolver_finish, resolvable);
 }
 
 gboolean dht_client_lookup(DhtClient *client, const gchar *id_base64, GError **error)
@@ -688,6 +654,8 @@ static void dht_client_finalize(GObject *obj)
 
     g_hash_table_destroy(priv->lookup_table);
     g_hash_table_destroy(priv->connection_table);
+    g_cancellable_cancel(priv->cancellable);
+    g_object_unref(priv->cancellable);
     g_object_unref(priv->socket);
     g_source_remove(priv->io_source);
     g_source_remove(priv->timeout_source);
@@ -1107,6 +1075,62 @@ static gsize dht_client_search(DhtClient *client, gconstpointer id, gpointer nod
     }
 
     return count;
+}
+
+static void dht_resolver_finish(GObject *resolver, GAsyncResult *result, gpointer arg)
+{
+    DhtResolvable *resolvable = arg;
+    DhtClient *client = resolvable->parent;
+    guint16 port = resolvable->port;
+    g_free(resolvable);
+
+    g_autoptr(GError) error = NULL;
+    GList *list = g_resolver_lookup_by_name_finish(G_RESOLVER(resolver), result, &error);
+    if(!list)
+    {
+        if(error->code == G_IO_ERROR_CANCELLED)
+            return; // client instance was already freed
+
+        // Signal resolver error
+        DhtClientPrivate *priv = dht_client_get_instance_private(client);
+        g_autofree gchar *id_base64 = g_base64_encode(priv->id, DHT_HASH_SIZE);
+        g_signal_emit(client, dht_client_signals[SIGNAL_ON_ERROR], 0, id_base64, error);
+        return;
+    }
+
+    DhtClientPrivate *priv = dht_client_get_instance_private(client);
+    DhtLookup *lookup = g_hash_table_lookup(priv->lookup_table, priv->id);
+    if(!lookup)
+    {
+        // Create lookup
+        lookup = g_new0(DhtLookup, 1);
+        memcpy(lookup->id, priv->id, DHT_HASH_SIZE);
+        lookup->parent = client;
+        lookup->queries = g_sequence_new(dht_query_destroy);
+        lookup->bootstrap_source = g_timeout_add(DHT_TIMEOUT_MS, dht_lookup_timeout, lookup);
+        g_hash_table_insert(priv->lookup_table, lookup->id, lookup);
+    }
+
+    GList *item;
+    for(item = list; item; item = item->next)
+    {
+        g_autoptr(GSocketAddress) sockaddr = g_inet_socket_address_new(G_INET_ADDRESS(item->data), port);
+
+        // Send request
+        MsgLookup msg;
+        msg.type = MSG_TYPE(priv->family) | MSG_LOOKUP_REQ;
+        memcpy(msg.srcid, priv->id, DHT_HASH_SIZE);
+        memcpy(msg.dstid, priv->id, DHT_HASH_SIZE);
+        gssize res = g_socket_send_to(priv->socket, sockaddr, (gchar*)&msg, sizeof(msg), NULL, NULL);
+        if(res >= 0)
+        {
+            priv->packets_sent++;
+            priv->bytes_sent += res;
+            break;
+        }
+    }
+
+    g_resolver_free_addresses(list);
 }
 
 static gboolean dht_query_timeout(gpointer arg)
