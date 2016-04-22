@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: nanotalk 2.0.1\n"
 "Report-Msgid-Bugs-To: xjaros32@stud.feec.vutbr.cz\n"
-"POT-Creation-Date: 2016-04-21 01:41+0200\n"
-"PO-Revision-Date: 2016-04-21 01:41+0200\n"
+"POT-Creation-Date: 2016-04-22 15:03+0200\n"
+"PO-Revision-Date: 2016-04-22 15:03+0200\n"
 "Last-Translator: Martin Jaroš <xjaros32@stud.feec.vutbr.cz>\n"
 "Language-Team: \n"
 "Language: cs\n"
@@ -36,7 +36,7 @@ msgstr "Soukromý klíč"
 msgid "List of aliases"
 msgstr "Seznam přezdívek"
 
-#: src/main.c:63 src/application.c:607
+#: src/main.c:63 src/application.c:592
 msgid "Nanotalk distributed multimedia service"
 msgstr "Nanotalk distribuovaná multimediální služba"
 
@@ -53,109 +53,105 @@ msgstr "Uložit změny"
 msgid "Nanotalk aliases"
 msgstr "Nanotalk přezdívky"
 
-#: src/application.c:426 src/application.c:429
+#: src/application.c:418 src/application.c:421
 msgid "packet"
 msgid_plural "packets"
 msgstr[0] "paket"
 msgstr[1] "pakety"
 msgstr[2] "paketů"
 
-#: src/application.c:498
+#: src/application.c:489
 msgid "Nanotalk configuration"
 msgstr "Nanotalk konfigurace"
 
-#: src/application.c:509
+#: src/application.c:500
 msgid "Client ID"
 msgstr "ID klienta"
 
-#: src/application.c:518
-msgid "Last seen"
-msgstr "Naposledy viděn"
-
-#: src/application.c:524
+#: src/application.c:509
 msgid "Received"
 msgstr "Přijato"
 
-#: src/application.c:530
+#: src/application.c:515
 msgid "Sent"
 msgstr "Odesláno"
 
-#: src/application.c:536
+#: src/application.c:521
 msgid "Peers"
 msgstr "Spojení"
 
-#: src/application.c:551
+#: src/application.c:536
 msgid "Enable IPv6"
 msgstr "Povolit IPv6"
 
-#: src/application.c:561
+#: src/application.c:546
 msgid "Local port"
 msgstr "Lokální port"
 
-#: src/application.c:568
+#: src/application.c:553
 msgid "Bootstrap host"
 msgstr "Zaváděcí hostitel"
 
-#: src/application.c:576
+#: src/application.c:561
 msgid "Bootstrap port"
 msgstr "Zaváděcí port"
 
-#: src/application.c:587
+#: src/application.c:572
 msgid "Apply"
 msgstr "Potvrdit"
 
-#: src/application.c:591
+#: src/application.c:576
 msgid "Close"
 msgstr "Zavřít"
 
-#: src/application.c:632
+#: src/application.c:617
 msgid "Missing GStreamer Base Plugins"
 msgstr "Chybí GStreamer Base Plugins"
 
-#: src/application.c:642
+#: src/application.c:627
 msgid "Missing GStreamer Good Plugins"
 msgstr "Chybí GStreamer Good Plugins"
 
-#: src/application.c:651
+#: src/application.c:636
 msgid "Missing Opus plugin for GStreamer"
 msgstr "Chybí Opus plugin pro GStreamer"
 
-#: src/application.c:658
+#: src/application.c:643
 msgid "Cannot register GStreamer plugin"
 msgstr "Nelze zaregistrovat GStreamer plugin"
 
-#: src/application.c:752
+#: src/application.c:737
 msgid "Preferences"
 msgstr "Nastavení"
 
-#: src/application.c:758
+#: src/application.c:743
 msgid "About"
 msgstr "O aplikaci"
 
-#: src/application.c:764
+#: src/application.c:749
 msgid "Quit"
 msgstr "Ukončit"
 
-#: src/dhtclient.c:430
+#: src/dhtclient.c:420
 msgid "Invalid key size"
 msgstr "Nesprávná velikost klíče"
 
-#: src/dhtclient.c:471
+#: src/dhtclient.c:461
 msgid "Invalid ID format"
 msgstr "Neplatný formát ID"
 
-#: src/dhtclient.c:478
+#: src/dhtclient.c:468
 msgid "Connection refused"
 msgstr "Spojení zamítnuto"
 
-#: src/dhtclient.c:1297
+#: src/dhtclient.c:1277
 msgid "Lookup failed"
 msgstr "Hledání se nezdařilo"
 
-#: src/dhtclient.c:1325
+#: src/dhtclient.c:1305
 msgid "Bootstrap timed out"
 msgstr "Vypršel čas zavedení"
 
-#: src/dhtclient.c:1348
+#: src/dhtclient.c:1328
 msgid "Connection timed out"
 msgstr "Vypršel čas spojení"

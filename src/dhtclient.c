@@ -55,7 +55,6 @@ enum
     PROP_KEY_SIZE,
     PROP_ID,
     PROP_PEERS,
-    PROP_LAST_SEEN,
     PROP_PACKETS_RECEIVED,
     PROP_PACKETS_SENT,
     PROP_BYTES_RECEIVED,
@@ -194,7 +193,6 @@ struct _dht_client_private
     GCancellable *cancellable;
 
     // Statistics
-    GTimeVal last_seen;
     guint64 packets_received, packets_sent;
     guint64 bytes_received, bytes_sent;
 };
@@ -330,14 +328,6 @@ static void dht_client_class_init(DhtClientClass *client_class)
      */
     g_object_class_install_property(object_class, PROP_PEERS,
             g_param_spec_uint("peers", "Peers", "Number of peers", 0, G_MAXUINT, 0,
-                    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
-
-    /**
-     * DhtClient:last-seen:
-     * Local time of last message reception or NULL if no message was yet received.
-     */
-    g_object_class_install_property(object_class, PROP_LAST_SEEN,
-            g_param_spec_boxed("last-seen", "Last seen", "Time of last message", G_TYPE_DATE_TIME,
                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     /**
@@ -589,14 +579,6 @@ static void dht_client_get_property(GObject *obj, guint prop, GValue *value, GPa
             }
 
             g_value_set_uint(value, count);
-            break;
-        }
-
-        case PROP_LAST_SEEN:
-        {
-            if(priv->last_seen.tv_sec && priv->last_seen.tv_usec)
-                g_value_take_boxed(value, g_date_time_new_from_timeval_local(&priv->last_seen));
-
             break;
         }
 
@@ -936,8 +918,6 @@ static void dht_client_update(DhtClient *client, gconstpointer id, gboolean is_a
     gsize addr_size = ADDR_SIZE(priv->family);
 
     g_debug("update node %08x (%s)", dht_id_hash(id), is_alive ? "alive" : "timed-out");
-    if(is_alive) g_get_current_time(&priv->last_seen);
-
     guint8 metric[DHT_HASH_SIZE], nbits;
     dht_xor(metric, priv->id, id);
 

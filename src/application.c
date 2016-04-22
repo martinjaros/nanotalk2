@@ -34,7 +34,7 @@
 struct _application
 {
     GtkWidget *main_window, *entry, *button_start, *button_volume, *button_stop, *call_dialog;
-    GtkWidget *config_window, *label_id, *label_last_seen, *label_received, *label_sent, *label_peers;
+    GtkWidget *config_window, *label_id, *label_received, *label_sent, *label_peers;
     GtkWidget *switch_ipv6, *spin_local_port, *entry_bootstrap_host, *spin_bootstrap_port;
     GtkWidget *menu, *editor_window;
     GtkStatusIcon *status_icon;
@@ -402,25 +402,17 @@ static gboolean config_update(Application *app)
 {
     if(app->config_window)
     {
-        g_autoptr(GDateTime) last_seen = NULL;
         guint64 bytes_received = 0, packets_received = 0;
         guint64 bytes_sent = 0, packets_sent = 0;
         guint peers = 0;
 
         g_object_get(app->client,
-            "last-seen", &last_seen,
             "bytes-received", &bytes_received,
             "packets-received", &packets_received,
             "bytes-sent", &bytes_sent,
             "packets-sent", &packets_sent,
             "peers", &peers,
             NULL);
-
-        if(last_seen)
-        {
-            g_autofree gchar *last_seen_str = g_date_time_format(last_seen, "%c");
-            gtk_label_set_text(GTK_LABEL(app->label_last_seen), last_seen_str);
-        }
 
         g_autofree gchar *received_str = g_strdup_printf("%s (%lu %s)",
                 g_format_size(bytes_received), packets_received, ngettext("packet", "packets", packets_received));
@@ -478,7 +470,6 @@ static void config_apply(GtkWidget *widget, Application *app)
 static void config_destroy(GtkWidget *widget, Application *app)
 {
     app->label_id = NULL;
-    app->label_last_seen = NULL;
     app->label_received = NULL;
     app->label_sent = NULL;
     app->label_peers = NULL;
@@ -515,33 +506,27 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_widget_set_can_focus(app->label_id, FALSE);
     gtk_grid_attach(GTK_GRID(grid), app->label_id, 1, 0, 1, 1);
 
-    label = gtk_label_new(_("Last seen"));
-    gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 1, 1, 1);
-    app->label_last_seen = gtk_label_new(NULL);
-    gtk_grid_attach(GTK_GRID(grid), app->label_last_seen, 1, 1, 1, 1);
-
     label = gtk_label_new(_("Received"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 1, 1, 1);
     app->label_received = gtk_label_new(NULL);
-    gtk_grid_attach(GTK_GRID(grid), app->label_received, 1, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), app->label_received, 1, 1, 1, 1);
 
     label = gtk_label_new(_("Sent"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 2, 1, 1);
     app->label_sent = gtk_label_new(NULL);
-    gtk_grid_attach(GTK_GRID(grid), app->label_sent, 1, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), app->label_sent, 1, 2, 1, 1);
 
     label = gtk_label_new(_("Peers"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 4, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 3, 1, 1);
     app->label_peers = gtk_label_new(NULL);
-    gtk_grid_attach(GTK_GRID(grid), app->label_peers, 1, 4, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), app->label_peers, 1, 3, 1, 1);
 
     // Configuration area
     GtkWidget *separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_grid_attach(GTK_GRID(grid), separator, 0, 5, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), separator, 0, 4, 2, 1);
 
     gboolean enable_ipv6 = g_key_file_get_boolean(app->config, "nanotalk", "enable-ipv6", NULL);
     guint16 local_port = g_key_file_get_integer(app->config, "nanotalk", "local-port", NULL);
@@ -550,40 +535,40 @@ static void config_show(GtkWidget *widget, Application *app)
 
     label = gtk_label_new(_("Enable IPv6"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 6, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 5, 1, 1);
     GtkWidget *box = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_button_box_set_layout(GTK_BUTTON_BOX(box), GTK_BUTTONBOX_END);
-    gtk_grid_attach(GTK_GRID(grid), box, 0, 6, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), box, 0, 5, 2, 1);
     app->switch_ipv6 = gtk_switch_new();
     gtk_switch_set_active(GTK_SWITCH(app->switch_ipv6), enable_ipv6);
     gtk_container_add(GTK_CONTAINER(box), app->switch_ipv6);
 
     label = gtk_label_new(_("Local port"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 7, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 6, 1, 1);
     app->spin_local_port = gtk_spin_button_new_with_range(0, G_MAXUINT16, 1);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_local_port), local_port);
-    gtk_grid_attach(GTK_GRID(grid), app->spin_local_port, 1, 7, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), app->spin_local_port, 1, 6, 1, 1);
 
     label = gtk_label_new(_("Bootstrap host"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 8, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 7, 1, 1);
     app->entry_bootstrap_host = gtk_entry_new();
     gtk_entry_set_width_chars(GTK_ENTRY(app->entry_bootstrap_host), 30);
     gtk_entry_set_text(GTK_ENTRY(app->entry_bootstrap_host), bootstrap_host ?: "");
-    gtk_grid_attach(GTK_GRID(grid), app->entry_bootstrap_host, 1, 8, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), app->entry_bootstrap_host, 1, 7, 1, 1);
 
     label = gtk_label_new(_("Bootstrap port"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 9, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 8, 1, 1);
     app->spin_bootstrap_port = gtk_spin_button_new_with_range(0, G_MAXUINT16, 1);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_bootstrap_port), bootstrap_port);
-    gtk_grid_attach(GTK_GRID(grid), app->spin_bootstrap_port, 1, 9, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), app->spin_bootstrap_port, 1, 8, 1, 1);
 
     // Buttons
     box = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_button_box_set_layout(GTK_BUTTON_BOX(box), GTK_BUTTONBOX_END);
-    gtk_grid_attach(GTK_GRID(grid), box, 0, 10, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), box, 0, 9, 2, 1);
     GtkWidget *button = gtk_button_new_with_label(_("Apply"));
     g_signal_connect(button, "clicked", (GCallback)config_apply, app);
     gtk_container_add(GTK_CONTAINER(box), button);
