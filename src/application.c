@@ -25,7 +25,7 @@
 #include <glib/gi18n.h>
 #include "application.h"
 
-#include "ringback.h"
+#include "tonegen.h"
 #include "rtpencrypt.h"
 #include "rtpdecrypt.h"
 
@@ -184,9 +184,9 @@ static gboolean dialog_run(Application *app)
         g_object_set(volume, "mute", FALSE, NULL);
         gst_object_unref(volume);
 
-        GstElement *ringback = gst_bin_get_by_name(GST_BIN(app->tx_pipeline), "ringback");
-        g_object_set(ringback, "enabled", FALSE, NULL);
-        gst_object_unref(ringback);
+        GstElement *tonegen = gst_bin_get_by_name(GST_BIN(app->tx_pipeline), "tonegen");
+        g_object_set(tonegen, "enabled", FALSE, NULL);
+        gst_object_unref(tonegen);
     }
     else call_stop(NULL, app);
 
@@ -267,8 +267,8 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     app->tx_watch = gst_bus_add_watch(bus, (GstBusFunc)bus_watch, app);
     gst_object_unref(bus);
 
-    GstElement *ringback = gst_element_factory_make("ringback", "ringback");
-    g_object_set(ringback, "enabled", remote, NULL);
+    GstElement *tonegen = gst_element_factory_make("tonegen", "tonegen");
+    g_object_set(tonegen, "enabled", remote, NULL);
 
     GstElement *audio_src = gst_element_factory_make("autoaudiosrc", "audio_src");
     GstElement *audio_enc = gst_element_factory_make("opusenc", "audio_enc");
@@ -284,8 +284,8 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     GstElement *rtp_sink = gst_element_factory_make("udpsink", "rtp_sink");
     g_object_set(rtp_sink, "socket", socket, "close-socket", FALSE, "host", host, "port", port, NULL);
 
-    gst_bin_add_many(GST_BIN(app->tx_pipeline), audio_src, ringback, audio_enc, audio_pay, rtp_enc, rtp_sink, NULL);
-    gst_element_link_many(audio_src, ringback, audio_enc, audio_pay, rtp_enc, rtp_sink, NULL);
+    gst_bin_add_many(GST_BIN(app->tx_pipeline), audio_src, tonegen, audio_enc, audio_pay, rtp_enc, rtp_sink, NULL);
+    gst_element_link_many(audio_src, tonegen, audio_enc, audio_pay, rtp_enc, rtp_sink, NULL);
     gst_debug_bin_to_dot_file_with_ts(GST_BIN(app->tx_pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "start-tx-pipeline");
     gst_element_set_state(app->tx_pipeline, GST_STATE_PLAYING);
 
@@ -618,7 +618,7 @@ static void menu_popup(GtkWidget *widget, guint button, guint activate_time, App
 
 static gboolean plugin_init(GstPlugin *plugin)
 {
-    return gst_element_register(plugin, "ringback", GST_RANK_NONE, GST_TYPE_RINGBACK) &&
+    return gst_element_register(plugin, "tonegen", GST_RANK_NONE, GST_TYPE_TONEGEN) &&
            gst_element_register(plugin, "rtpencrypt", GST_RANK_NONE, GST_TYPE_RTP_ENCRYPT) &&
            gst_element_register(plugin, "rtpdecrypt", GST_RANK_NONE, GST_TYPE_RTP_DECRYPT);
 }

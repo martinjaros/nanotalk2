@@ -29,7 +29,6 @@ PKG_CHECK_MODULES(GLIB, [glib-2.0 >= $GLIB_REQUIRED gio-2.0 >= $GLIB_REQUIRED],
 
 AS_IF([test "x$enable_gui" != "xno"], [
   AC_DEFINE(ENABLE_GUI, 1, [Build GTK+ frontend.])
-  AC_SUBST(LIBM, [-lm])
 
   PKG_CHECK_MODULES(GTK, [gtk+-3.0 >= $GTK_REQUIRED],
   [AC_SUBST(GTK_CFLAGS) AC_SUBST(GTK_LIBS)], [AC_MSG_ERROR([
