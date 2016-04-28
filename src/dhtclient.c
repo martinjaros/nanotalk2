@@ -1022,7 +1022,7 @@ static gsize dht_client_search(DhtClient *client, gconstpointer id, gpointer nod
             for(i = 0; (i < bucket->count) && (count < DHT_NODE_COUNT); i++)
             {
                 // Ignore timed out nodes
-                if(!bucket->nodes[i].is_alive && (current_time - bucket->nodes[i].last_seen > DHT_LINGER_MS * 1000L))
+                if(!bucket->nodes[i].is_alive && (current_time - bucket->nodes[i].last_seen > DHT_LINGER_MS * (gint64)1000))
                     continue;
 
                 MsgNode *node = node_ptr;

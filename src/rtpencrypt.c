@@ -110,7 +110,7 @@ static GstFlowReturn gst_rtp_encrypt_chain(GstPad *pad, GstObject *parent, GstBu
     gconstpointer key = encrypt->key ? g_bytes_get_data(encrypt->key, &key_len) : NULL;
     if(key_len != crypto_aead_chacha20poly1305_KEYBYTES)
     {
-        GST_ELEMENT_ERROR(encrypt, RESOURCE, SETTINGS, ("Invalid key."),
+        GST_ELEMENT_ERROR(encrypt, LIBRARY, SETTINGS, ("Invalid key."),
             ("expected key size of %u bytes, but got %zu bytes", crypto_aead_chacha20poly1305_KEYBYTES, key_len));
 
         gst_buffer_unref(inbuf);
@@ -121,6 +121,7 @@ static GstFlowReturn gst_rtp_encrypt_chain(GstPad *pad, GstObject *parent, GstBu
     if(gst_rtp_buffer_map(inbuf, GST_MAP_READ, &rtp_buffer))
     {
         guint16 seq = gst_rtp_buffer_get_seq(&rtp_buffer);
+        guint32 ssrc = gst_rtp_buffer_get_ssrc(&rtp_buffer);
         guint header_len = gst_rtp_buffer_get_header_len(&rtp_buffer);
         guint payload_len = gst_rtp_buffer_get_payload_len(&rtp_buffer);
         guint packet_len = gst_rtp_buffer_get_packet_len(&rtp_buffer);
@@ -137,21 +138,25 @@ static GstFlowReturn gst_rtp_encrypt_chain(GstPad *pad, GstObject *parent, GstBu
                 if(gst_buffer_map(outbuf, &outbuf_map, GST_MAP_WRITE))
                 {
                     guint64 roc = encrypt->roc;
-                    if(seq == UINT16_MAX) encrypt->roc++;
 
-                    guint64 index = GUINT64_TO_BE((roc << 16) | seq);
-                    if(crypto_aead_chacha20poly1305_encrypt(
+                    guint8 nonce[12];
+                    GST_WRITE_UINT32_BE(nonce, ssrc);
+                    GST_WRITE_UINT64_BE(nonce + 4, roc << 16 | (guint64)seq);
+                    if(crypto_aead_chacha20poly1305_ietf_encrypt(
                             outbuf_map.data + header_len, NULL,
                             inbuf_map.data + header_len, payload_len,
                             inbuf_map.data, header_len, NULL,
-                            (gconstpointer)&index, key) == 0)
+                            nonce, key) == 0)
                     {
+                        if((seq == UINT16_MAX) && (++encrypt->roc == 0x1000000000000))
+                            GST_ELEMENT_ERROR(encrypt, STREAM, DECRYPT_NOKEY, ("Key utilization limit was reached."), (NULL));
+
                         memcpy(outbuf_map.data, inbuf_map.data, header_len);
                         gst_buffer_unmap(outbuf, &outbuf_map);
                         gst_buffer_unmap(inbuf, &inbuf_map);
                         gst_buffer_unref(inbuf);
 
-                        GST_DEBUG_OBJECT(encrypt, "Pushing buffer roc=%lu seq=%hu", roc, seq);
+                        GST_DEBUG_OBJECT(encrypt, "Pushing buffer ssrc=%u roc=%lu seq=%hu", ssrc, roc, seq);
                         return gst_pad_push(encrypt->src, outbuf);
                     }
 

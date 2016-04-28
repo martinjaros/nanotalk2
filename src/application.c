@@ -147,13 +147,23 @@ static gboolean bus_watch(GstBus *bus, GstMessage *message, Application *app)
             g_autofree gchar *debug = NULL;
             gst_message_parse_error(message, &error, &debug);
             g_warning("%s %s", error->message, debug);
+            call_stop(NULL, app);
+            break;
+        }
+
+        case GST_MESSAGE_WARNING:
+        {
+            g_autoptr(GError) error = NULL;
+            g_autofree gchar *debug = NULL;
+            gst_message_parse_warning(message, &error, &debug);
+            g_warning("%s %s", error->message, debug);
             break;
         }
 
         case GST_MESSAGE_ELEMENT:
         {
             // Stop pipeline on socket timeout
-            if(strcmp(gst_structure_get_name(gst_message_get_structure(message)), "GstUDPSrcTimeout") == 0)
+            if(strcmp(gst_structure_get_name(gst_message_get_structure(message)), "GstRtpTimeout") == 0)
                 call_stop(NULL, app);
 
             break;
@@ -243,11 +253,11 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
         NULL);
 
     GstElement *rtp_src = gst_element_factory_make("udpsrc", "rtp_src");
-    g_object_set(rtp_src, "caps", caps, "socket", socket, "timeout", RECV_TIMEOUT, NULL);
+    g_object_set(rtp_src, "caps", caps, "socket", socket, NULL);
     gst_caps_unref(caps);
 
     GstElement *rtp_dec = gst_element_factory_make("rtpdecrypt", "rtp_dec");
-    g_object_set(rtp_dec, "key", dec_key, NULL);
+    g_object_set(rtp_dec, "key", dec_key, "timeout", RECV_TIMEOUT, NULL);
 
     GstElement *rtp_buf = gst_element_factory_make("rtpjitterbuffer", "rtp_buf");
     GstElement *audio_depay = gst_element_factory_make("rtpopusdepay", "audio_depay");
@@ -273,7 +283,7 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     GstElement *audio_src = gst_element_factory_make("autoaudiosrc", "audio_src");
     GstElement *audio_enc = gst_element_factory_make("opusenc", "audio_enc");
     GstElement *audio_pay = gst_element_factory_make("rtpopuspay", "audio_pay");
-    g_object_set(audio_enc, "cbr", FALSE, "dtx", TRUE, NULL);
+    gst_util_set_object_arg(G_OBJECT(audio_enc), "bitrate-type", "constrained-vbr");
 
     GstElement *rtp_enc = gst_element_factory_make("rtpencrypt", "rtp_enc");
     g_object_set(rtp_enc, "key", enc_key, NULL);
@@ -338,11 +348,10 @@ static void completion_update(Application *app)
 
         start = end;
     }
-}
 
-static void editor_destroy(GtkWidget *widget, Application *app)
-{
-    app->editor_window = NULL;
+    gtk_text_iter_backward_char(&start);
+    if(gtk_text_iter_get_char(&start) != '\n') // ensure trailing newline
+        gtk_text_buffer_insert(app->aliases, &end, "\n", 1);
 }
 
 static void editor_save(GtkWidget *widget, Application *app)
@@ -364,12 +373,18 @@ static void editor_save(GtkWidget *widget, Application *app)
             g_warning("%s", error->message);
     }
 
-    gtk_widget_destroy(app->editor_window);
+    gtk_widget_hide(app->editor_window);
 }
 
 static void editor_show(GtkWidget *widget, GtkEntryIconPosition icon_pos, GdkEvent *event, Application *app)
 {
-    if(app->editor_window) return;
+    if(app->editor_window)
+    {
+        if(!gtk_widget_is_visible(app->editor_window))
+            gtk_widget_show(app->editor_window);
+
+        return;
+    }
 
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
@@ -391,8 +406,11 @@ static void editor_show(GtkWidget *widget, GtkEntryIconPosition icon_pos, GdkEve
     gtk_box_pack_end(GTK_BOX(vbox), hbox, FALSE, TRUE, 0);
 
     app->editor_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    g_signal_connect(app->editor_window, "destroy", (GCallback)editor_destroy, app);
+    g_signal_connect(app->editor_window, "delete-event", (GCallback)gtk_widget_hide_on_delete, NULL);
     g_object_set(app->editor_window, "icon-name", "accessories-text-editor", "title", _("Nanotalk aliases"), NULL);
+    gtk_window_set_transient_for(GTK_WINDOW(app->editor_window), GTK_WINDOW(app->main_window));
+    gtk_window_set_destroy_with_parent(GTK_WINDOW(app->editor_window), TRUE);
+    gtk_window_set_type_hint(GTK_WINDOW(app->editor_window), GDK_WINDOW_TYPE_HINT_DIALOG);
     gtk_window_set_default_size(GTK_WINDOW(app->editor_window), 500, 300);
     gtk_container_add(GTK_CONTAINER(app->editor_window), vbox);
     gtk_widget_show_all(app->editor_window);
@@ -400,7 +418,7 @@ static void editor_show(GtkWidget *widget, GtkEntryIconPosition icon_pos, GdkEve
 
 static gboolean config_update(Application *app)
 {
-    if(app->config_window)
+    if(gtk_widget_is_visible(app->config_window))
     {
         guint64 bytes_received = 0, packets_received = 0;
         guint64 bytes_sent = 0, packets_sent = 0;
@@ -467,26 +485,26 @@ static void config_apply(GtkWidget *widget, Application *app)
         g_warning("%s", error->message);
 }
 
-static void config_destroy(GtkWidget *widget, Application *app)
-{
-    app->label_id = NULL;
-    app->label_received = NULL;
-    app->label_sent = NULL;
-    app->label_peers = NULL;
-    app->switch_ipv6 = NULL;
-    app->spin_local_port = NULL;
-    app->entry_bootstrap_host = NULL;
-    app->spin_bootstrap_port = NULL;
-    app->config_window = NULL;
-}
-
 static void config_show(GtkWidget *widget, Application *app)
 {
-    if(app->config_window) return;
+    if(app->config_window)
+    {
+        if(!gtk_widget_is_visible(app->config_window))
+        {
+            gtk_widget_show(app->config_window);
+            g_timeout_add_seconds(1, (GSourceFunc)config_update, app);
+            config_update(app);
+        }
+
+        return;
+    }
 
     app->config_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    g_signal_connect(app->config_window, "destroy", (GCallback)config_destroy, app);
+    g_signal_connect(app->config_window, "delete-event", (GCallback)gtk_widget_hide_on_delete, NULL);
     g_object_set(app->config_window, "icon-name", "preferences-desktop", "title", _("Nanotalk configuration"), "resizable", FALSE, NULL);
+    gtk_window_set_transient_for(GTK_WINDOW(app->config_window), GTK_WINDOW(app->main_window));
+    gtk_window_set_destroy_with_parent(GTK_WINDOW(app->config_window), TRUE);
+    gtk_window_set_type_hint(GTK_WINDOW(app->config_window), GDK_WINDOW_TYPE_HINT_DIALOG);
 
     GtkWidget *grid = gtk_grid_new();
     g_object_set(grid, "column-spacing", 10, "row-spacing", 5, "margin", 10, NULL);
@@ -536,12 +554,10 @@ static void config_show(GtkWidget *widget, Application *app)
     label = gtk_label_new(_("Enable IPv6"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 5, 1, 1);
-    GtkWidget *box = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_button_box_set_layout(GTK_BUTTON_BOX(box), GTK_BUTTONBOX_END);
-    gtk_grid_attach(GTK_GRID(grid), box, 0, 5, 2, 1);
     app->switch_ipv6 = gtk_switch_new();
     gtk_switch_set_active(GTK_SWITCH(app->switch_ipv6), enable_ipv6);
-    gtk_container_add(GTK_CONTAINER(box), app->switch_ipv6);
+    gtk_widget_set_halign(app->switch_ipv6, GTK_ALIGN_END);
+    gtk_grid_attach(GTK_GRID(grid), app->switch_ipv6, 0, 5, 2, 1);
 
     label = gtk_label_new(_("Local port"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
@@ -566,7 +582,7 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_grid_attach(GTK_GRID(grid), app->spin_bootstrap_port, 1, 8, 1, 1);
 
     // Buttons
-    box = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL);
+    GtkWidget *box = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_button_box_set_layout(GTK_BUTTON_BOX(box), GTK_BUTTONBOX_END);
     gtk_grid_attach(GTK_GRID(grid), box, 0, 9, 2, 1);
     GtkWidget *button = gtk_button_new_with_label(_("Apply"));
@@ -574,22 +590,22 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_container_add(GTK_CONTAINER(box), button);
 
     button = gtk_button_new_with_label(_("Close"));
-    g_signal_connect_swapped(button, "clicked", (GCallback)gtk_widget_destroy, app->config_window);
+    g_signal_connect_swapped(button, "clicked", (GCallback)gtk_widget_hide, app->config_window);
     gtk_container_add(GTK_CONTAINER(box), button);
 
-    config_update(app);
     gtk_widget_show_all(app->config_window);
     g_timeout_add_seconds(1, (GSourceFunc)config_update, app);
+    config_update(app);
 }
 
 static void about_show(GtkWidget *widget, Application *app)
 {
     const gchar *authors[] = { "Martin Jaro\xC5\xA1 <xjaros32@stud.feec.vutbr.cz>", NULL };
-    gtk_show_about_dialog(NULL,
+    gtk_show_about_dialog(GTK_WINDOW(app->main_window),
         "logo-icon-name", "call-start-symbolic",
         "program-name", "nanotalk",
         "version", PACKAGE_VERSION,
-        "comments", _("Nanotalk distributed multimedia service"),
+        "comments", _("Nanotalk distributed voice client"),
         "authors", authors,
         "license-type", GTK_LICENSE_GPL_2_0,
         "website", PACKAGE_URL,
@@ -764,12 +780,6 @@ void application_free(Application *app)
 {
     if(gtk_widget_is_sensitive(app->button_stop))
         call_stop(NULL, app);
-
-    if(app->editor_window)
-        gtk_widget_destroy(app->editor_window);
-
-    if(app->config_window)
-        gtk_widget_destroy(app->config_window);
 
     gtk_widget_destroy(app->main_window);
     gtk_widget_destroy(app->menu);

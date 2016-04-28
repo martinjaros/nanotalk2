@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: nanotalk 2.0.1\n"
 "Report-Msgid-Bugs-To: xjaros32@stud.feec.vutbr.cz\n"
-"POT-Creation-Date: 2016-04-22 15:03+0200\n"
-"PO-Revision-Date: 2016-04-22 15:03+0200\n"
+"POT-Creation-Date: 2016-04-29 16:03+0200\n"
+"PO-Revision-Date: 2016-04-28 20:38+0200\n"
 "Last-Translator: Martin Jaroš <xjaros32@stud.feec.vutbr.cz>\n"
 "Language-Team: \n"
 "Language: cs\n"
@@ -36,99 +36,99 @@ msgstr "Soukromý klíč"
 msgid "List of aliases"
 msgstr "Seznam přezdívek"
 
-#: src/main.c:63 src/application.c:592
-msgid "Nanotalk distributed multimedia service"
-msgstr "Nanotalk distribuovaná multimediální služba"
+#: src/main.c:63 src/application.c:610
+msgid "Nanotalk distributed voice client"
+msgstr "Nanotalk distribuovaný hlasový klient"
 
-#: src/application.c:172
+#: src/application.c:182
 #, c-format
 msgid "Answer an incoming call from <b>%s</b> ?"
 msgstr "Přijmout příchozí hovor od <b>%s</b> ?"
 
-#: src/application.c:385
+#: src/application.c:400
 msgid "Save changes"
 msgstr "Uložit změny"
 
-#: src/application.c:395
+#: src/application.c:410
 msgid "Nanotalk aliases"
 msgstr "Nanotalk přezdívky"
 
-#: src/application.c:418 src/application.c:421
+#: src/application.c:436 src/application.c:439
 msgid "packet"
 msgid_plural "packets"
 msgstr[0] "paket"
 msgstr[1] "pakety"
 msgstr[2] "paketů"
 
-#: src/application.c:489
+#: src/application.c:504
 msgid "Nanotalk configuration"
 msgstr "Nanotalk konfigurace"
 
-#: src/application.c:500
+#: src/application.c:518
 msgid "Client ID"
 msgstr "ID klienta"
 
-#: src/application.c:509
+#: src/application.c:527
 msgid "Received"
 msgstr "Přijato"
 
-#: src/application.c:515
+#: src/application.c:533
 msgid "Sent"
 msgstr "Odesláno"
 
-#: src/application.c:521
+#: src/application.c:539
 msgid "Peers"
 msgstr "Spojení"
 
-#: src/application.c:536
+#: src/application.c:554
 msgid "Enable IPv6"
 msgstr "Povolit IPv6"
 
-#: src/application.c:546
+#: src/application.c:564
 msgid "Local port"
 msgstr "Lokální port"
 
-#: src/application.c:553
+#: src/application.c:571
 msgid "Bootstrap host"
 msgstr "Zaváděcí hostitel"
 
-#: src/application.c:561
+#: src/application.c:579
 msgid "Bootstrap port"
 msgstr "Zaváděcí port"
 
-#: src/application.c:572
+#: src/application.c:590
 msgid "Apply"
 msgstr "Potvrdit"
 
-#: src/application.c:576
+#: src/application.c:594
 msgid "Close"
 msgstr "Zavřít"
 
-#: src/application.c:617
+#: src/application.c:635
 msgid "Missing GStreamer Base Plugins"
 msgstr "Chybí GStreamer Base Plugins"
 
-#: src/application.c:627
+#: src/application.c:645
 msgid "Missing GStreamer Good Plugins"
 msgstr "Chybí GStreamer Good Plugins"
 
-#: src/application.c:636
+#: src/application.c:654
 msgid "Missing Opus plugin for GStreamer"
 msgstr "Chybí Opus plugin pro GStreamer"
 
-#: src/application.c:643
+#: src/application.c:661
 msgid "Cannot register GStreamer plugin"
 msgstr "Nelze zaregistrovat GStreamer plugin"
 
-#: src/application.c:737
+#: src/application.c:755
 msgid "Preferences"
 msgstr "Nastavení"
 
-#: src/application.c:743
+#: src/application.c:761
 msgid "About"
 msgstr "O aplikaci"
 
-#: src/application.c:749
+#: src/application.c:767
 msgid "Quit"
 msgstr "Ukončit"
 

@@ -25,7 +25,8 @@ GST_DEBUG_CATEGORY_STATIC(gst_rtp_decrypt_debug);
 enum
 {
     PROP_0,
-    PROP_KEY
+    PROP_KEY,
+    PROP_TIMEOUT
 };
 
 static GstStaticPadTemplate src_template =
@@ -35,8 +36,22 @@ static GstStaticPadTemplate sink_template =
 
 G_DEFINE_TYPE(GstRtpDecrypt, gst_rtp_decrypt, GST_TYPE_ELEMENT)
 
+static gboolean on_timeout(GstClock *clock, GstClockTime time, GstClockID id, gpointer object)
+{
+    GstRtpDecrypt *decrypt = GST_RTP_DECRYPT(object);
+    if(!decrypt->validated)
+    {
+        GstMessage *message = gst_message_new_element(GST_OBJECT(object), gst_structure_new_empty("GstRtpTimeout"));
+            gst_element_post_message(GST_ELEMENT(object), message);
+    }
+
+    decrypt->validated = FALSE;
+    return TRUE;
+}
+
 static void gst_rtp_decrypt_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec);
 static void gst_rtp_decrypt_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec);
+static GstStateChangeReturn gst_rtp_decrypt_change_state(GstElement *element, GstStateChange transition);
 static GstFlowReturn gst_rtp_decrypt_chain(GstPad *pad, GstObject *parent, GstBuffer *inbuf);
 static void gst_rtp_decrypt_finalize(GObject *object);
 
@@ -50,7 +65,11 @@ static void gst_rtp_decrypt_class_init(GstRtpDecryptClass *klass)
     g_object_class_install_property(object_class, PROP_KEY,
         g_param_spec_boxed("key", "Key", "Decryption key", G_TYPE_BYTES, G_PARAM_READWRITE));
 
+    g_object_class_install_property(object_class, PROP_TIMEOUT,
+        g_param_spec_uint64("timeout", "Timeout", "Source timeout (ns)", 0, G_MAXUINT64, 0, G_PARAM_READWRITE));
+
     GstElementClass *element_class = (GstElementClass*)klass;
+    element_class->change_state = gst_rtp_decrypt_change_state;
     gst_element_class_add_pad_template(element_class, gst_static_pad_template_get(&src_template));
     gst_element_class_add_pad_template(element_class, gst_static_pad_template_get(&sink_template));
     gst_element_class_set_details_simple(element_class,
@@ -83,6 +102,10 @@ static void gst_rtp_decrypt_set_property(GObject *object, guint prop_id, const G
             decrypt->s_l = 0;
             break;
 
+        case PROP_TIMEOUT:
+            decrypt->timeout = g_value_get_uint64(value);
+            break;
+
         default:
             G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
     }
@@ -98,9 +121,46 @@ static void gst_rtp_decrypt_get_property(GObject *object, guint prop_id, GValue 
             g_value_set_boxed(value, decrypt->key);
             break;
 
+        case PROP_TIMEOUT:
+            g_value_set_uint64(value, decrypt->timeout);
+            break;
+
         default:
             G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
     }
+}
+
+static GstStateChangeReturn gst_rtp_decrypt_change_state(GstElement *element, GstStateChange transition)
+{
+    GstRtpDecrypt *decrypt = GST_RTP_DECRYPT(element);
+
+    switch(transition)
+    {
+        case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
+            if(decrypt->timeout)
+            {
+                GstClock *clock = gst_element_get_clock(element);
+                decrypt->clock_id = gst_clock_new_periodic_id(clock, gst_clock_get_time(clock) + decrypt->timeout, decrypt->timeout);
+                gst_clock_id_wait_async(decrypt->clock_id, on_timeout, decrypt, NULL);
+                gst_object_unref(clock);
+            }
+
+            break;
+
+        case GST_STATE_CHANGE_PLAYING_TO_PAUSED:
+            if(decrypt->clock_id)
+            {
+                gst_clock_id_unschedule(decrypt->clock_id);
+                gst_clock_id_unref(decrypt->clock_id);
+                decrypt->clock_id = NULL;
+            }
+
+            break;
+
+        default: break;
+    }
+
+    return GST_ELEMENT_CLASS(gst_rtp_decrypt_parent_class)->change_state(element, transition);
 }
 
 static GstFlowReturn gst_rtp_decrypt_chain(GstPad *pad, GstObject *parent, GstBuffer *inbuf)
@@ -111,7 +171,7 @@ static GstFlowReturn gst_rtp_decrypt_chain(GstPad *pad, GstObject *parent, GstBu
     gconstpointer key = decrypt->key ? g_bytes_get_data(decrypt->key, &key_len) : NULL;
     if(key_len != crypto_aead_chacha20poly1305_KEYBYTES)
     {
-        GST_ELEMENT_ERROR(decrypt, RESOURCE, SETTINGS, ("Invalid key."),
+        GST_ELEMENT_ERROR(decrypt, LIBRARY, SETTINGS, ("Invalid key."),
             ("expected key size of %u bytes, but got %zu bytes", crypto_aead_chacha20poly1305_KEYBYTES, key_len));
 
         gst_buffer_unref(inbuf);
@@ -122,6 +182,7 @@ static GstFlowReturn gst_rtp_decrypt_chain(GstPad *pad, GstObject *parent, GstBu
     if(gst_rtp_buffer_map(inbuf, GST_MAP_READ, &rtp_buffer))
     {
         guint16 seq = gst_rtp_buffer_get_seq(&rtp_buffer);
+        guint32 ssrc = gst_rtp_buffer_get_ssrc(&rtp_buffer);
         guint header_len = gst_rtp_buffer_get_header_len(&rtp_buffer);
         guint payload_len = gst_rtp_buffer_get_payload_len(&rtp_buffer);
         guint packet_len = gst_rtp_buffer_get_packet_len(&rtp_buffer);
@@ -138,25 +199,29 @@ static GstFlowReturn gst_rtp_decrypt_chain(GstPad *pad, GstObject *parent, GstBu
                 GstMapInfo outbuf_map;
                 if(gst_buffer_map(outbuf, &outbuf_map, GST_MAP_WRITE))
                 {
-                    guint64 roc = decrypt->roc;
-                    if((decrypt->s_l < 0x8000) && (decrypt->s_l + 0x8000 < seq) && (roc > 0)) roc--;
-                    if((decrypt->s_l > 0x7FFF) && (decrypt->s_l - 0x8000 > seq)) roc++;
+                    guint64 roc = decrypt->roc, s_l = decrypt->s_l;
+                    if((s_l < 0x8000) && (s_l + 0x8000 < seq) && (roc > 0x0000000000000)) roc--;
+                    if((s_l > 0x7FFF) && (s_l - 0x8000 > seq) && (roc < 0x1000000000000)) roc++;
 
-                    guint64 index = GUINT64_TO_BE((roc << 16) | seq);
-                    if(crypto_aead_chacha20poly1305_decrypt(
+                    guint8 nonce[12];
+                    GST_WRITE_UINT32_BE(nonce, ssrc);
+                    GST_WRITE_UINT64_BE(nonce + 4, roc << 16 | (guint64)seq);
+                    if(crypto_aead_chacha20poly1305_ietf_decrypt(
                             outbuf_map.data + header_len, NULL, NULL,
                             inbuf_map.data + header_len, payload_len,
                             inbuf_map.data, header_len,
-                            (gconstpointer)&index, key) == 0)
+                            (gconstpointer)nonce, key) == 0)
                     {
+                        decrypt->validated = TRUE;
                         decrypt->roc = roc;
                         decrypt->s_l = seq;
+
                         memcpy(outbuf_map.data, inbuf_map.data, header_len);
                         gst_buffer_unmap(outbuf, &outbuf_map);
                         gst_buffer_unmap(inbuf, &inbuf_map);
                         gst_buffer_unref(inbuf);
 
-                        GST_DEBUG_OBJECT(decrypt, "Pushing buffer roc=%lu seq=%hu", roc, seq);
+                        GST_DEBUG_OBJECT(decrypt, "Pushing buffer ssrc=%u roc=%lu seq=%hu", ssrc, roc, seq);
                         return gst_pad_push(decrypt->src, outbuf);
                     }
                     gst_buffer_unmap(outbuf, &outbuf_map);

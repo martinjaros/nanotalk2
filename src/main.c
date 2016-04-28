@@ -60,7 +60,7 @@ static gboolean startup(int *argc, char ***argv, GError **error)
 
     g_autoptr(GOptionContext) context = g_option_context_new(NULL);
     g_option_context_add_main_entries(context, options, PACKAGE);
-    g_option_context_set_summary(context, _("Nanotalk distributed multimedia service"));
+    g_option_context_set_summary(context, _("Nanotalk distributed voice client"));
     g_option_context_set_description(context, PACKAGE_BUGREPORT "\n" PACKAGE_URL);
 
 #ifdef ENABLE_GUI
@@ -79,7 +79,8 @@ static gboolean startup(int *argc, char ***argv, GError **error)
 
     // Set default paths
     g_autofree gchar *path = g_build_filename(g_get_home_dir(), ".nanotalk", NULL);
-    g_mkdir_with_parents(path, 0775);
+    if(!config_file || !key_file || !aliases_file)
+        g_mkdir_with_parents(path, 0775);
 
     if(!config_file) config_file = g_build_filename(path, CONFIG_FILE, NULL);
     if(!key_file) key_file = g_build_filename(path, KEY_FILE, NULL);

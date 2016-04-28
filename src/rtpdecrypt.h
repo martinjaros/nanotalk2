@@ -34,11 +34,15 @@ typedef struct _GstRtpDecryptClass GstRtpDecryptClass;
 struct _GstRtpDecrypt
 {
     GstElement element;
-    GstPad *src;
     GstPad *sink;
+    GstPad *src;
     GBytes *key;
     guint64 roc;
     guint16 s_l;
+
+    guint64 timeout;
+    GstClockID clock_id;
+    gboolean validated;
 };
 
 struct _GstRtpDecryptClass

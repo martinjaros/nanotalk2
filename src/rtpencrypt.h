@@ -34,8 +34,8 @@ typedef struct _GstRtpEncryptClass GstRtpEncryptClass;
 struct _GstRtpEncrypt
 {
     GstElement element;
-    GstPad *src;
     GstPad *sink;
+    GstPad *src;
     GBytes *key;
     guint64 roc;
 };
