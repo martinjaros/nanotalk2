@@ -1,24 +1,29 @@
 #!/usr/bin/env python
 
 MESSAGES = True
-TRACELOG = False
+TRACELOG = True
 GRAPHS = False
 
 import os, sys, time, subprocess
 
-if MESSAGES:
-    os.environ.update({'G_MESSAGES_DEBUG': 'all'})
+env1 = dict(os.environ)
+env2 = env1
 
-if TRACELOG:
-    os.environ.update({'GST_DEBUG_FILE': 'trace.log', 'GST_DEBUG': '*:WARNING,GST_INIT:INFO'})
+if MESSAGES:
+    env1.update({'G_MESSAGES_DEBUG': 'all'})
 
 if GRAPHS:
-    os.environ.update({'GST_DEBUG_DUMP_DOT_DIR': '.'})
+    env1.update({'GST_DEBUG_DUMP_DOT_DIR': '.'})
     subprocess.call('rm -f *-pipeline.dot.svg', shell=True)
 
-proc1 = subprocess.Popen('nanotalk -c test1.cfg -k test1.key -a aliases.txt'.split(), env=os.environ)
+if TRACELOG:
+    env1 = dict(env1)
+    env1.update({'GST_DEBUG_FILE': 'test1.log', 'GST_DEBUG': '*:WARNING,GST_INIT:INFO'})
+    env2.update({'GST_DEBUG_FILE': 'test2.log', 'GST_DEBUG': '*:WARNING,GST_INIT:INFO'})
+
+proc1 = subprocess.Popen('nanotalk -c test1.cfg -k test1.key -a aliases.txt'.split(), env=env1)
 time.sleep(.1)
-proc2 = subprocess.Popen('nanotalk -c test2.cfg -k test2.key -a aliases.txt'.split(), env=os.environ)
+proc2 = subprocess.Popen('nanotalk -c test2.cfg -k test2.key -a aliases.txt'.split(), env=env2)
 
 try:
     proc1.wait()
