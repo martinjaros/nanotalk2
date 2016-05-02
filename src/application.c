@@ -401,7 +401,7 @@ static void editor_show(GtkWidget *widget, GtkEntryIconPosition icon_pos, GdkEve
     g_signal_connect(button, "clicked", (GCallback)editor_save, app);
 
     GtkWidget *hbox = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL);
-    g_object_set(hbox, "halign", GTK_ALIGN_END, "margin", 5, NULL);
+    g_object_set(hbox, "layout-style", GTK_BUTTONBOX_END, "margin", 5, NULL);
     gtk_container_add(GTK_CONTAINER(hbox), button);
     gtk_box_pack_end(GTK_BOX(vbox), hbox, FALSE, TRUE, 0);
 
@@ -506,19 +506,25 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_window_set_destroy_with_parent(GTK_WINDOW(app->config_window), TRUE);
     gtk_window_set_type_hint(GTK_WINDOW(app->config_window), GDK_WINDOW_TYPE_HINT_DIALOG);
 
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_container_add(GTK_CONTAINER(app->config_window), vbox);
+    GtkWidget *notebook = gtk_notebook_new();
+    gtk_container_add(GTK_CONTAINER(vbox), notebook);
+
+    // Status page
     GtkWidget *grid = gtk_grid_new();
     g_object_set(grid, "column-spacing", 10, "row-spacing", 5, "margin", 10, NULL);
-    gtk_container_add(GTK_CONTAINER(app->config_window), grid);
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), grid, gtk_label_new(_("Status")));
 
     g_autofree gchar *id = NULL;
     g_object_get(app->client, "id", &id, NULL);
     g_autofree gchar *id_markup = g_strconcat("<b>", id, "</b>", NULL);
 
-    // Status area
     GtkWidget *label = gtk_label_new(_("Client ID"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 0, 1, 1);
     app->label_id = gtk_label_new(NULL);
+    gtk_widget_set_hexpand(label, TRUE);
     gtk_label_set_markup(GTK_LABEL(app->label_id), id_markup);
     gtk_label_set_selectable(GTK_LABEL(app->label_id), TRUE);
     gtk_widget_set_can_focus(app->label_id, FALSE);
@@ -542,9 +548,10 @@ static void config_show(GtkWidget *widget, Application *app)
     app->label_peers = gtk_label_new(NULL);
     gtk_grid_attach(GTK_GRID(grid), app->label_peers, 1, 3, 1, 1);
 
-    // Configuration area
-    GtkWidget *separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_grid_attach(GTK_GRID(grid), separator, 0, 4, 2, 1);
+    // Network page
+    grid = gtk_grid_new();
+    g_object_set(grid, "column-spacing", 10, "row-spacing", 5, "margin", 10, NULL);
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), grid, gtk_label_new(_("Network")));
 
     gboolean enable_ipv6 = g_key_file_get_boolean(app->config, "nanotalk", "enable-ipv6", NULL);
     guint16 local_port = g_key_file_get_integer(app->config, "nanotalk", "local-port", NULL);
@@ -553,45 +560,45 @@ static void config_show(GtkWidget *widget, Application *app)
 
     label = gtk_label_new(_("Enable IPv6"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 5, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 0, 1, 1);
     app->switch_ipv6 = gtk_switch_new();
     gtk_switch_set_active(GTK_SWITCH(app->switch_ipv6), enable_ipv6);
     gtk_widget_set_halign(app->switch_ipv6, GTK_ALIGN_END);
-    gtk_grid_attach(GTK_GRID(grid), app->switch_ipv6, 0, 5, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), app->switch_ipv6, 0, 0, 2, 1);
 
     label = gtk_label_new(_("Local port"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 6, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 1, 1, 1);
     app->spin_local_port = gtk_spin_button_new_with_range(0, G_MAXUINT16, 1);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_local_port), local_port);
-    gtk_grid_attach(GTK_GRID(grid), app->spin_local_port, 1, 6, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), app->spin_local_port, 1, 1, 1, 1);
 
     label = gtk_label_new(_("Bootstrap host"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 7, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 2, 1, 1);
     app->entry_bootstrap_host = gtk_entry_new();
     gtk_entry_set_width_chars(GTK_ENTRY(app->entry_bootstrap_host), 30);
     gtk_entry_set_text(GTK_ENTRY(app->entry_bootstrap_host), bootstrap_host ?: "");
-    gtk_grid_attach(GTK_GRID(grid), app->entry_bootstrap_host, 1, 7, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), app->entry_bootstrap_host, 1, 2, 1, 1);
 
     label = gtk_label_new(_("Bootstrap port"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 8, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 3, 1, 1);
     app->spin_bootstrap_port = gtk_spin_button_new_with_range(0, G_MAXUINT16, 1);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_bootstrap_port), bootstrap_port);
-    gtk_grid_attach(GTK_GRID(grid), app->spin_bootstrap_port, 1, 8, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), app->spin_bootstrap_port, 1, 3, 1, 1);
 
-    // Buttons
-    GtkWidget *box = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_button_box_set_layout(GTK_BUTTON_BOX(box), GTK_BUTTONBOX_END);
-    gtk_grid_attach(GTK_GRID(grid), box, 0, 9, 2, 1);
+    // Button box
+    GtkWidget *hbox = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL);
+    g_object_set(hbox, "layout-style", GTK_BUTTONBOX_END, "spacing", 5, "margin", 5, NULL);
+    gtk_container_add(GTK_CONTAINER(vbox), hbox);
     GtkWidget *button = gtk_button_new_with_label(_("Apply"));
     g_signal_connect(button, "clicked", (GCallback)config_apply, app);
-    gtk_container_add(GTK_CONTAINER(box), button);
+    gtk_container_add(GTK_CONTAINER(hbox), button);
 
     button = gtk_button_new_with_label(_("Close"));
     g_signal_connect_swapped(button, "clicked", (GCallback)gtk_widget_hide, app->config_window);
-    gtk_container_add(GTK_CONTAINER(box), button);
+    gtk_container_add(GTK_CONTAINER(hbox), button);
 
     gtk_widget_show_all(app->config_window);
     g_timeout_add_seconds(1, (GSourceFunc)config_update, app);
