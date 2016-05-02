@@ -36,6 +36,7 @@ struct _application
     GtkWidget *main_window, *entry, *button_start, *button_volume, *button_stop, *call_dialog;
     GtkWidget *config_window, *label_id, *label_received, *label_sent, *label_peers;
     GtkWidget *switch_ipv6, *spin_local_port, *entry_bootstrap_host, *spin_bootstrap_port;
+    GtkWidget *switch_echo, *combo_bandwidth, *spin_bitrate, *spin_complexity;
     GtkWidget *menu, *editor_window;
     GtkStatusIcon *status_icon;
     GtkListStore *completions;
@@ -240,6 +241,27 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
         if(!valid) gtk_entry_set_text(GTK_ENTRY(app->entry), peer_id);
     }
 
+    GstElement *audio_src = NULL;
+    GstElement *audio_sink = NULL;
+    if(g_key_file_get_boolean(app->config, "audio", "echo-cancel", NULL))
+    {
+        // PulseAudio setup
+        audio_src = gst_element_factory_make("pulsesrc", "audio_src");
+        audio_sink = gst_element_factory_make("pulsesink", "audio_sink");
+        if(audio_src && audio_sink)
+        {
+            GstStructure *props = gst_structure_new("props",
+                "media.role", G_TYPE_STRING, "phone",
+                "filter.want", G_TYPE_STRING, "echo-cancel",
+                NULL);
+
+            g_object_set(audio_src, "stream-properties", props, NULL);
+            g_object_set(audio_sink, "stream-properties", props, NULL);
+            gst_structure_free(props);
+        }
+        else g_warning("Echo cancellation is supported only for PulseAudio");
+    }
+
     // Start receiver
     app->rx_pipeline = gst_pipeline_new("rx_pipeline");
     GstBus *bus = gst_pipeline_get_bus(GST_PIPELINE(app->rx_pipeline));
@@ -262,9 +284,10 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     GstElement *rtp_buf = gst_element_factory_make("rtpjitterbuffer", "rtp_buf");
     GstElement *audio_depay = gst_element_factory_make("rtpopusdepay", "audio_depay");
     GstElement *audio_dec = gst_element_factory_make("opusdec", "audio_dec");
-    GstElement *audio_sink = gst_element_factory_make("autoaudiosink", "audio_sink");
     GstElement *volume = gst_element_factory_make("volume", "volume");
-    g_object_set(volume, "mute", remote, NULL);
+    g_object_set(volume, "mute", remote, "volume", gtk_scale_button_get_value(GTK_SCALE_BUTTON(app->button_volume)), NULL);
+
+    if(!audio_sink) audio_sink = gst_element_factory_make("autoaudiosink", "audio_sink");
 
     gst_bin_add_many(GST_BIN(app->rx_pipeline), rtp_src, rtp_dec, rtp_buf, audio_depay, audio_dec, volume, audio_sink, NULL);
     gst_element_link_many(rtp_src, rtp_dec, rtp_buf, audio_depay, audio_dec, volume, audio_sink, NULL);
@@ -277,14 +300,23 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     app->tx_watch = gst_bus_add_watch(bus, (GstBusFunc)bus_watch, app);
     gst_object_unref(bus);
 
+    if(!audio_src) audio_src = gst_element_factory_make("autoaudiosrc", "audio_src");
+
     GstElement *tonegen = gst_element_factory_make("tonegen", "tonegen");
     g_object_set(tonegen, "enabled", remote, NULL);
 
-    GstElement *audio_src = gst_element_factory_make("autoaudiosrc", "audio_src");
-    GstElement *audio_enc = gst_element_factory_make("opusenc", "audio_enc");
-    GstElement *audio_pay = gst_element_factory_make("rtpopuspay", "audio_pay");
-    gst_util_set_object_arg(G_OBJECT(audio_enc), "bitrate-type", "constrained-vbr");
+    g_autofree gchar *bandwidth = g_key_file_get_value(app->config, "audio", "bandwidth", NULL);
+    g_autofree gchar *bitrate = g_key_file_get_value(app->config, "audio", "bitrate", NULL);
+    g_autofree gchar *complexity = g_key_file_get_value(app->config, "audio", "complexity", NULL);
 
+    GstElement *audio_enc = gst_element_factory_make("opusenc", "audio_enc");
+    gst_util_set_object_arg(G_OBJECT(audio_enc), "audio-type", "voice");
+    gst_util_set_object_arg(G_OBJECT(audio_enc), "bitrate-type", "constrained-vbr");
+    if(bandwidth) gst_util_set_object_arg(G_OBJECT(audio_enc), "bandwidth", bandwidth);
+    if(bitrate) gst_util_set_object_arg(G_OBJECT(audio_enc), "bitrate", bitrate);
+    if(complexity) gst_util_set_object_arg(G_OBJECT(audio_enc), "complexity", complexity);
+
+    GstElement *audio_pay = gst_element_factory_make("rtpopuspay", "audio_pay");
     GstElement *rtp_enc = gst_element_factory_make("rtpencrypt", "rtp_enc");
     g_object_set(rtp_enc, "key", enc_key, NULL);
 
@@ -416,7 +448,7 @@ static void editor_show(GtkWidget *widget, GtkEntryIconPosition icon_pos, GdkEve
     gtk_widget_show_all(app->editor_window);
 }
 
-static gboolean config_update(Application *app)
+static gboolean status_update(Application *app)
 {
     if(gtk_widget_is_visible(app->config_window))
     {
@@ -457,8 +489,8 @@ static void config_apply(GtkWidget *widget, Application *app)
     const gchar* bootstrap_host = gtk_entry_get_text(GTK_ENTRY(app->entry_bootstrap_host));
     guint16 bootstrap_port = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(app->spin_bootstrap_port));
 
-    if((enable_ipv6 != g_key_file_get_boolean(app->config, "nanotalk", "enable-ipv6", NULL)) ||
-       (local_port != g_key_file_get_integer(app->config, "nanotalk", "local-port", NULL)))
+    if((enable_ipv6 != g_key_file_get_boolean(app->config, "network", "enable-ipv6", NULL)) ||
+       (local_port != g_key_file_get_integer(app->config, "network", "local-port", NULL)))
     {
         g_autoptr(GBytes) key = NULL;
         g_object_get(app->client, "key", &key, NULL);
@@ -476,11 +508,22 @@ static void config_apply(GtkWidget *widget, Application *app)
     if(bootstrap_host[0] && bootstrap_port)
         dht_client_bootstrap(app->client, bootstrap_host, bootstrap_port);
 
+    gboolean echo_cancel = gtk_switch_get_active(GTK_SWITCH(app->switch_echo));
+    const gchar *bandwidth = gtk_combo_box_get_active_id(GTK_COMBO_BOX(app->combo_bandwidth)) ?: "";
+    guint bitrate = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(app->spin_bitrate));
+    guint complexity = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(app->spin_complexity));
+
     // Save configuration
-    g_key_file_set_boolean(app->config, "nanotalk", "enable-ipv6", enable_ipv6);
-    g_key_file_set_integer(app->config, "nanotalk", "local-port", local_port);
-    g_key_file_set_string(app->config, "nanotalk", "bootstrap-host", bootstrap_host);
-    g_key_file_set_integer(app->config, "nanotalk", "bootstrap-port", bootstrap_port);
+    g_key_file_set_boolean(app->config, "network", "enable-ipv6", enable_ipv6);
+    g_key_file_set_integer(app->config, "network", "local-port", local_port);
+    g_key_file_set_string(app->config, "network", "bootstrap-host", bootstrap_host);
+    g_key_file_set_integer(app->config, "network", "bootstrap-port", bootstrap_port);
+
+    g_key_file_set_boolean(app->config, "audio", "echo-cancel", echo_cancel);
+    g_key_file_set_string(app->config, "audio", "bandwidth", bandwidth);
+    g_key_file_set_integer(app->config, "audio", "bitrate", bitrate);
+    g_key_file_set_integer(app->config, "audio", "complexity", complexity);
+
     if(!g_key_file_save_to_file(app->config, app->config_file, &error))
         g_warning("%s", error->message);
 }
@@ -492,8 +535,8 @@ static void config_show(GtkWidget *widget, Application *app)
         if(!gtk_widget_is_visible(app->config_window))
         {
             gtk_widget_show(app->config_window);
-            g_timeout_add_seconds(1, (GSourceFunc)config_update, app);
-            config_update(app);
+            g_timeout_add_seconds(1, (GSourceFunc)status_update, app);
+            status_update(app);
         }
 
         return;
@@ -524,10 +567,10 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_widget_set_halign(label, GTK_ALIGN_START);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 0, 1, 1);
     app->label_id = gtk_label_new(NULL);
-    gtk_widget_set_hexpand(label, TRUE);
     gtk_label_set_markup(GTK_LABEL(app->label_id), id_markup);
     gtk_label_set_selectable(GTK_LABEL(app->label_id), TRUE);
     gtk_widget_set_can_focus(app->label_id, FALSE);
+    gtk_widget_set_hexpand(app->label_id, TRUE);
     gtk_grid_attach(GTK_GRID(grid), app->label_id, 1, 0, 1, 1);
 
     label = gtk_label_new(_("Received"));
@@ -553,16 +596,17 @@ static void config_show(GtkWidget *widget, Application *app)
     g_object_set(grid, "column-spacing", 10, "row-spacing", 5, "margin", 10, NULL);
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), grid, gtk_label_new(_("Network")));
 
-    gboolean enable_ipv6 = g_key_file_get_boolean(app->config, "nanotalk", "enable-ipv6", NULL);
-    guint16 local_port = g_key_file_get_integer(app->config, "nanotalk", "local-port", NULL);
-    g_autofree gchar* bootstrap_host = g_key_file_get_string(app->config, "nanotalk", "bootstrap-host", NULL);
-    guint16 bootstrap_port = g_key_file_get_integer(app->config, "nanotalk", "bootstrap-port", NULL);
+    gboolean enable_ipv6 = g_key_file_get_boolean(app->config, "network", "enable-ipv6", NULL);
+    guint16 local_port = g_key_file_get_integer(app->config, "network", "local-port", NULL);
+    g_autofree gchar *bootstrap_host = g_key_file_get_string(app->config, "network", "bootstrap-host", NULL);
+    guint16 bootstrap_port = g_key_file_get_integer(app->config, "network", "bootstrap-port", NULL);
 
     label = gtk_label_new(_("Enable IPv6"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 0, 1, 1);
     app->switch_ipv6 = gtk_switch_new();
     gtk_switch_set_active(GTK_SWITCH(app->switch_ipv6), enable_ipv6);
+    gtk_widget_set_hexpand(app->switch_ipv6, TRUE);
     gtk_widget_set_halign(app->switch_ipv6, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(grid), app->switch_ipv6, 0, 0, 2, 1);
 
@@ -588,6 +632,51 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_bootstrap_port), bootstrap_port);
     gtk_grid_attach(GTK_GRID(grid), app->spin_bootstrap_port, 1, 3, 1, 1);
 
+    // Audio page
+    grid = gtk_grid_new();
+    g_object_set(grid, "column-spacing", 10, "row-spacing", 5, "margin", 10, NULL);
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), grid, gtk_label_new(_("Audio")));
+
+    gboolean echo_cancel = g_key_file_get_boolean(app->config, "audio", "echo-cancel", NULL);
+    g_autofree gchar *bandwidth = g_key_file_get_string(app->config, "audio", "bandwidth", NULL);
+    guint bitrate = g_key_file_get_integer(app->config, "audio", "bitrate", NULL);
+    guint complexity = g_key_file_get_integer(app->config, "audio", "complexity", NULL);
+
+    label = gtk_label_new(_("Echo cancellation"));
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 0, 1, 1);
+    app->switch_echo = gtk_switch_new();
+    gtk_switch_set_active(GTK_SWITCH(app->switch_echo), echo_cancel);
+    gtk_widget_set_hexpand(app->switch_echo, TRUE);
+    gtk_widget_set_halign(app->switch_echo, GTK_ALIGN_END);
+    gtk_grid_attach(GTK_GRID(grid), app->switch_echo, 1, 0, 2, 1);
+
+    label = gtk_label_new(_("Bandwidth"));
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 1, 1, 1);
+    app->combo_bandwidth = gtk_combo_box_text_new();
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(app->combo_bandwidth), "narrowband", "narrowband");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(app->combo_bandwidth), "mediumband", "mediumband");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(app->combo_bandwidth), "wideband", "wideband");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(app->combo_bandwidth), "superwideband", "superwideband");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(app->combo_bandwidth), "fullband", "fullband");
+    gtk_combo_box_set_active_id(GTK_COMBO_BOX(app->combo_bandwidth), bandwidth ?: "");
+    gtk_grid_attach(GTK_GRID(grid), app->combo_bandwidth, 1, 1, 2, 1);
+
+    label = gtk_label_new(_("Bitrate"));
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 2, 1, 1);
+    app->spin_bitrate = gtk_spin_button_new_with_range(4000, 650000, 1000);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_bitrate), bitrate);
+    gtk_grid_attach(GTK_GRID(grid), app->spin_bitrate, 1, 2, 2, 1);
+
+    label = gtk_label_new(_("Complexity"));
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 3, 1, 1);
+    app->spin_complexity = gtk_spin_button_new_with_range(0, 10, 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_complexity), complexity);
+    gtk_grid_attach(GTK_GRID(grid), app->spin_complexity, 1, 3, 2, 1);
+
     // Button box
     GtkWidget *hbox = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL);
     g_object_set(hbox, "layout-style", GTK_BUTTONBOX_END, "spacing", 5, "margin", 5, NULL);
@@ -601,8 +690,8 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_container_add(GTK_CONTAINER(hbox), button);
 
     gtk_widget_show_all(app->config_window);
-    g_timeout_add_seconds(1, (GSourceFunc)config_update, app);
-    config_update(app);
+    g_timeout_add_seconds(1, (GSourceFunc)status_update, app);
+    status_update(app);
 }
 
 static void about_show(GtkWidget *widget, Application *app)

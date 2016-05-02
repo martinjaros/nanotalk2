@@ -26,7 +26,13 @@ static Application *application = NULL;
 #include <stdlib.h>
 #include "dhtclient.h"
 
+#define DEFAULT_IPV6 FALSE
 #define DEFAULT_PORT 5004
+
+#define DEFAULT_ECHO_CANCEL     FALSE
+#define DEFAULT_BANDWIDTH       "fullband"
+#define DEFAULT_BITRATE         64000
+#define DEFAULT_COMPLEXITY      10
 
 #define CONFIG_FILE     "user.cfg"
 #define KEY_FILE        "user.key"
@@ -91,17 +97,25 @@ static gboolean startup(int *argc, char ***argv, GError **error)
     if(!g_key_file_load_from_file(config, config_file, G_KEY_FILE_KEEP_COMMENTS, NULL))
     {
         // Save default configuration
-        g_key_file_set_boolean(config, "nanotalk", "enable-ipv6", FALSE);
-        g_key_file_set_integer(config, "nanotalk", "local-port", DEFAULT_PORT);
-        g_key_file_set_string(config, "nanotalk", "bootstrap-host", "");
-        g_key_file_set_integer(config, "nanotalk", "bootstrap-port", DEFAULT_PORT);
+        g_key_file_set_boolean(config, "network", "enable-ipv6", DEFAULT_IPV6);
+        g_key_file_set_integer(config, "network", "local-port", DEFAULT_PORT);
+        g_key_file_set_string(config,  "network", "bootstrap-host", "");
+        g_key_file_set_integer(config, "network", "bootstrap-port", DEFAULT_PORT);
+
+#ifdef ENABLE_GUI
+        g_key_file_set_boolean(config, "audio", "echo-cancel", DEFAULT_ECHO_CANCEL);
+        g_key_file_set_string(config,  "audio", "bandwidth", DEFAULT_BANDWIDTH);
+        g_key_file_set_integer(config, "audio", "bitrate", DEFAULT_BITRATE);
+        g_key_file_set_integer(config, "audio", "complexity", DEFAULT_COMPLEXITY);
+#endif /* ENABLE_GUI */
+
         g_key_file_save_to_file(config, config_file, NULL);
     }
 
-    gboolean enable_ipv6 = g_key_file_get_boolean(config, "nanotalk", "enable-ipv6", NULL);
-    guint16 local_port = g_key_file_get_integer(config, "nanotalk", "local-port", NULL);
-    g_autofree gchar* bootstrap_host = g_key_file_get_string(config, "nanotalk", "bootstrap-host", NULL);
-    guint16 bootstrap_port = g_key_file_get_integer(config, "nanotalk", "bootstrap-port", NULL);
+    gboolean enable_ipv6 = g_key_file_get_boolean(config, "network", "enable-ipv6", NULL);
+    guint16 local_port = g_key_file_get_integer(config, "network", "local-port", NULL);
+    g_autofree gchar* bootstrap_host = g_key_file_get_string(config, "network", "bootstrap-host", NULL);
+    guint16 bootstrap_port = g_key_file_get_integer(config, "network", "bootstrap-port", NULL);
     g_autoptr(DhtClient) client = NULL;
 
     // Load key from file
