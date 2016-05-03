@@ -30,9 +30,8 @@ static Application *application = NULL;
 #define DEFAULT_PORT 5004
 
 #define DEFAULT_ECHO_CANCEL     FALSE
-#define DEFAULT_BANDWIDTH       "fullband"
 #define DEFAULT_BITRATE         64000
-#define DEFAULT_COMPLEXITY      10
+#define DEFAULT_LATENCY         200
 
 #define CONFIG_FILE     "user.cfg"
 #define KEY_FILE        "user.key"
@@ -104,9 +103,8 @@ static gboolean startup(int *argc, char ***argv, GError **error)
 
 #ifdef ENABLE_GUI
         g_key_file_set_boolean(config, "audio", "echo-cancel", DEFAULT_ECHO_CANCEL);
-        g_key_file_set_string(config,  "audio", "bandwidth", DEFAULT_BANDWIDTH);
         g_key_file_set_integer(config, "audio", "bitrate", DEFAULT_BITRATE);
-        g_key_file_set_integer(config, "audio", "complexity", DEFAULT_COMPLEXITY);
+        g_key_file_set_integer(config, "audio", "latency", DEFAULT_LATENCY);
 #endif /* ENABLE_GUI */
 
         g_key_file_save_to_file(config, config_file, NULL);
