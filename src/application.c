@@ -36,7 +36,7 @@ struct _application
     GtkWidget *main_window, *entry, *button_start, *button_volume, *button_stop, *call_dialog;
     GtkWidget *config_window, *label_id, *label_received, *label_sent, *label_peers;
     GtkWidget *switch_ipv6, *spin_local_port, *entry_bootstrap_host, *spin_bootstrap_port;
-    GtkWidget *switch_echo, *spin_bitrate, *spin_latency;
+    GtkWidget *switch_echo, *spin_latency, *spin_bitrate, *switch_vbr;
     GtkWidget *menu, *editor_window;
     GtkStatusIcon *status_icon;
     GtkListStore *completions;
@@ -286,6 +286,9 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     g_autofree gchar *latency = g_key_file_get_value(app->config, "audio", "latency", NULL);
     if(latency) gst_util_set_object_arg(G_OBJECT(rtp_buf), "latency", latency);
 
+    g_autofree gchar *buffer_mode = g_key_file_get_value(app->config, "audio", "buffer-mode", NULL);
+    if(buffer_mode) gst_util_set_object_arg(G_OBJECT(rtp_buf), "mode", buffer_mode);
+
     GstElement *audio_depay = gst_element_factory_make("rtpopusdepay", "audio_depay");
     GstElement *audio_dec = gst_element_factory_make("opusdec", "audio_dec");
     GstElement *volume = gst_element_factory_make("volume", "volume");
@@ -311,10 +314,12 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
 
     GstElement *audio_enc = gst_element_factory_make("opusenc", "audio_enc");
     gst_util_set_object_arg(G_OBJECT(audio_enc), "audio-type", "voice");
-    gst_util_set_object_arg(G_OBJECT(audio_enc), "bitrate-type", "constrained-vbr");
 
     g_autofree gchar *bitrate = g_key_file_get_value(app->config, "audio", "bitrate", NULL);
     if(bitrate) gst_util_set_object_arg(G_OBJECT(audio_enc), "bitrate", bitrate);
+
+    gboolean enable_vbr = g_key_file_get_boolean(app->config, "audio", "enable-vbr", NULL);
+    gst_util_set_object_arg(G_OBJECT(audio_enc), "bitrate-type", enable_vbr ? "constrained-vbr" : "cbr");
 
     GstElement *audio_pay = gst_element_factory_make("rtpopuspay", "audio_pay");
     GstElement *rtp_enc = gst_element_factory_make("rtpencrypt", "rtp_enc");
@@ -491,35 +496,44 @@ static void config_apply(GtkWidget *widget, Application *app)
     const gchar* bootstrap_host = gtk_entry_get_text(GTK_ENTRY(app->entry_bootstrap_host));
     guint16 bootstrap_port = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(app->spin_bootstrap_port));
 
+    DhtClient *client = NULL;
     if((enable_ipv6 != g_key_file_get_boolean(app->config, "network", "enable-ipv6", NULL)) ||
        (local_port != g_key_file_get_integer(app->config, "network", "local-port", NULL)))
     {
         g_autoptr(GBytes) key = NULL;
         g_object_get(app->client, "key", &key, NULL);
-        g_object_unref(app->client);
+        client = dht_client_new(enable_ipv6 ? G_SOCKET_FAMILY_IPV6 : G_SOCKET_FAMILY_IPV4, local_port, key, &error);
+        if(client)
+        {
+            g_object_unref(app->client);
 
-        // Create new client
-        app->client = dht_client_new(enable_ipv6 ? G_SOCKET_FAMILY_IPV6 : G_SOCKET_FAMILY_IPV4, local_port, key, &error);
-        if(!app->client) g_error("%s", error->message);
-
-        g_signal_connect(app->client, "accept-connection", (GCallback)accept_connection, app);
-        g_signal_connect(app->client, "new-connection", (GCallback)new_connection, app);
-        g_signal_connect(app->client, "on-error", (GCallback)on_error, app);
+            g_signal_connect(client, "accept-connection", (GCallback)accept_connection, app);
+            g_signal_connect(client, "new-connection", (GCallback)new_connection, app);
+            g_signal_connect(client, "on-error", (GCallback)on_error, app);
+            app->client = client;
+        }
+        else
+        {
+            g_warning("%s", error->message);
+            g_clear_error(&error);
+        }
     }
 
     g_autofree gchar *prev_bootstrap_host = g_key_file_get_string(app->config, "network", "bootstrap-host", NULL);
     guint16 prev_bootstrap_port = g_key_file_get_integer(app->config, "network", "bootstrap-port", NULL);
-    if((g_strcmp0(bootstrap_host, prev_bootstrap_host) != 0) || (bootstrap_port != prev_bootstrap_port))
+    if(client || (g_strcmp0(bootstrap_host, prev_bootstrap_host) != 0) || (bootstrap_port != prev_bootstrap_port))
         dht_client_bootstrap(app->client, bootstrap_host, bootstrap_port);
 
     // Audio
     gboolean echo_cancel = gtk_switch_get_active(GTK_SWITCH(app->switch_echo));
+    gboolean enable_vbr = gtk_switch_get_active(GTK_SWITCH(app->switch_vbr));
     guint bitrate = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(app->spin_bitrate));
     guint latency = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(app->spin_latency));
 
     if(app->tx_pipeline)
     {
         GstElement *audio_enc = gst_bin_get_by_name(GST_BIN(app->tx_pipeline), "audio_enc");
+        gst_util_set_object_arg(G_OBJECT(audio_enc), "bitrate-type", enable_vbr ? "constrained-vbr" : "cbr");
         g_object_set(audio_enc, "bitrate", bitrate, NULL);
         gst_object_unref(audio_enc);
     }
@@ -531,8 +545,9 @@ static void config_apply(GtkWidget *widget, Application *app)
     g_key_file_set_integer(app->config, "network", "bootstrap-port", bootstrap_port);
 
     g_key_file_set_boolean(app->config, "audio", "echo-cancel", echo_cancel);
-    g_key_file_set_integer(app->config, "audio", "bitrate", bitrate);
     g_key_file_set_integer(app->config, "audio", "latency", latency);
+    g_key_file_set_integer(app->config, "audio", "bitrate", bitrate);
+    g_key_file_set_boolean(app->config, "audio", "enable-vbr", enable_vbr);
 
     if(!g_key_file_save_to_file(app->config, app->config_file, &error))
         g_warning("%s", error->message);
@@ -648,6 +663,7 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), grid, gtk_label_new(_("Audio")));
 
     gboolean echo_cancel = g_key_file_get_boolean(app->config, "audio", "echo-cancel", NULL);
+    gboolean enable_vbr = g_key_file_get_boolean(app->config, "audio", "enable-vbr", NULL);
     guint bitrate = g_key_file_get_integer(app->config, "audio", "bitrate", NULL);
     guint latency = g_key_file_get_integer(app->config, "audio", "latency", NULL);
 
@@ -660,19 +676,28 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_widget_set_halign(app->switch_echo, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(grid), app->switch_echo, 1, 0, 2, 1);
 
-    label = gtk_label_new(_("Bitrate"));
-    gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 1, 1, 1);
-    app->spin_bitrate = gtk_spin_button_new_with_range(4000, 650000, 1000);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_bitrate), bitrate);
-    gtk_grid_attach(GTK_GRID(grid), app->spin_bitrate, 1, 1, 2, 1);
-
     label = gtk_label_new(_("Latency"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 1, 1, 1);
     app->spin_latency = gtk_spin_button_new_with_range(0, 1000, 10);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_latency), latency);
-    gtk_grid_attach(GTK_GRID(grid), app->spin_latency, 1, 2, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), app->spin_latency, 1, 1, 2, 1);
+
+    label = gtk_label_new(_("Bitrate"));
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 2, 1, 1);
+    app->spin_bitrate = gtk_spin_button_new_with_range(4000, 650000, 1000);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_bitrate), bitrate);
+    gtk_grid_attach(GTK_GRID(grid), app->spin_bitrate, 1, 2, 2, 1);
+
+    label = gtk_label_new(_("Enable VBR"));
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 3, 1, 1);
+    app->switch_vbr = gtk_switch_new();
+    gtk_switch_set_active(GTK_SWITCH(app->switch_vbr), enable_vbr);
+    gtk_widget_set_hexpand(app->switch_vbr, TRUE);
+    gtk_widget_set_halign(app->switch_vbr, GTK_ALIGN_END);
+    gtk_grid_attach(GTK_GRID(grid), app->switch_vbr, 1, 3, 2, 1);
 
     // Button box
     GtkWidget *hbox = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL);
