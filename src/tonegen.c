@@ -12,17 +12,15 @@
  * GNU General Public License for more details.
  */
 
-#define G_LOG_DOMAIN "ToneGen"
-
 #include "tonegen.h"
 
 #define PI 3.14159265358979323846
 
-#define DEFAULT_ENABLED     FALSE
-#define DEFAULT_TONE_AMPL   0.5
-#define DEFAULT_TONE_FREQ   425
-#define DEFAULT_TONE_DUR    1
-#define DEFAULT_PAUSE_DUR   4
+#define DEFAULT_ENABLED         FALSE
+#define DEFAULT_TONE_AMPLITUDE  0.5
+#define DEFAULT_TONE_FREQUENCY  425
+#define DEFAULT_TONE_DURATION   1
+#define DEFAULT_PAUSE_DURATION  4
 
 enum
 {
@@ -51,16 +49,16 @@ static void gst_tonegen_class_init(GstToneGenClass *klass)
         g_param_spec_boolean("enabled", "Enabled", "Enable tone generation", DEFAULT_ENABLED, G_PARAM_READWRITE));
 
     g_object_class_install_property(object_class, PROP_TONE_AMPLITUDE,
-        g_param_spec_float("tone-amplitude", "Tone amplitude", "Tone amplitude", 0, 1, DEFAULT_TONE_AMPL, G_PARAM_READWRITE));
+        g_param_spec_float("tone-amplitude", "Tone amplitude", "Tone amplitude", 0, 1, DEFAULT_TONE_AMPLITUDE, G_PARAM_READWRITE));
 
     g_object_class_install_property(object_class, PROP_TONE_FREQUENCY,
-        g_param_spec_float("tone-frequency", "Tone frequency", "Tone frequency (Hz)", 0, G_MAXFLOAT, DEFAULT_TONE_FREQ, G_PARAM_READWRITE));
+        g_param_spec_float("tone-frequency", "Tone frequency", "Tone frequency (Hz)", 0, G_MAXFLOAT, DEFAULT_TONE_FREQUENCY, G_PARAM_READWRITE));
 
     g_object_class_install_property(object_class, PROP_TONE_DURATION,
-        g_param_spec_float("tone-duration", "Tone duration", "Tone duration (s)", 0, G_MAXFLOAT, DEFAULT_TONE_DUR, G_PARAM_READWRITE));
+        g_param_spec_float("tone-duration", "Tone duration", "Tone duration (s)", 0, G_MAXFLOAT, DEFAULT_TONE_DURATION, G_PARAM_READWRITE));
 
     g_object_class_install_property(object_class, PROP_PAUSE_DURATION,
-        g_param_spec_float("pause-duration", "Pause duration", "Pause duration (s)", 0, G_MAXFLOAT, DEFAULT_PAUSE_DUR, G_PARAM_READWRITE));
+        g_param_spec_float("pause-duration", "Pause duration", "Pause duration (s)", 0, G_MAXFLOAT, DEFAULT_PAUSE_DURATION, G_PARAM_READWRITE));
 
     GstElementClass *element_class = (GstElementClass*)klass;
     gst_element_class_set_details_simple(element_class,
@@ -80,10 +78,10 @@ static void gst_tonegen_class_init(GstToneGenClass *klass)
 static void gst_tonegen_init(GstToneGen *tonegen)
 {
     tonegen->enabled = DEFAULT_ENABLED;
-    tonegen->tone_angular_rate = 2. * PI * DEFAULT_TONE_FREQ;
-    tonegen->tone_amplitude = DEFAULT_TONE_AMPL;
-    tonegen->tone_duration = DEFAULT_TONE_DUR;
-    tonegen->pause_duration = DEFAULT_PAUSE_DUR;
+    tonegen->tone_frequency = DEFAULT_TONE_FREQUENCY;
+    tonegen->tone_amplitude = DEFAULT_TONE_AMPLITUDE;
+    tonegen->tone_duration = DEFAULT_TONE_DURATION;
+    tonegen->pause_duration = DEFAULT_PAUSE_DURATION;
 }
 
 static void gst_tonegen_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec)
@@ -101,7 +99,7 @@ static void gst_tonegen_set_property(GObject *object, guint prop_id, const GValu
             break;
 
         case PROP_TONE_FREQUENCY:
-            tonegen->tone_angular_rate = 2. * PI * g_value_get_float(value);
+            tonegen->tone_frequency = g_value_get_float(value);
             break;
 
         case PROP_TONE_DURATION:
@@ -125,8 +123,6 @@ static void gst_tonegen_get_property(GObject *object, guint prop_id, GValue *val
     {
         case PROP_ENABLED:
             g_value_set_boolean(value, tonegen->enabled);
-            tonegen->sample_phase = 0;
-            tonegen->sample_time = 0;
             break;
 
         case PROP_TONE_AMPLITUDE:
@@ -134,7 +130,7 @@ static void gst_tonegen_get_property(GObject *object, guint prop_id, GValue *val
             break;
 
         case PROP_TONE_FREQUENCY:
-            g_value_set_float(value, tonegen->tone_angular_rate / (2. * PI));
+            g_value_set_float(value, tonegen->tone_frequency);
             break;
 
         case PROP_TONE_DURATION:
@@ -153,8 +149,8 @@ static void gst_tonegen_get_property(GObject *object, guint prop_id, GValue *val
 static gboolean gst_tonegen_setup(GstAudioFilter *filter, const GstAudioInfo *info)
 {
     GstToneGen *tonegen = GST_TONEGEN(filter);
+    tonegen->sample_rate = info->rate;
     tonegen->channels = info->channels;
-    tonegen->sample_rate_inv = 1. / info->rate;
     return TRUE;
 }
 
@@ -169,25 +165,25 @@ static GstFlowReturn gst_tonegen_transform_ip(GstBaseTransform *transform, GstBu
         gint16 *ptr = (gint16*)info.data;
         while((gpointer)ptr < (gpointer)info.data + info.size)
         {
-            tonegen->sample_time += tonegen->sample_rate_inv;
-            if(tonegen->sample_time > tonegen->tone_duration + tonegen->pause_duration)
-                tonegen->sample_time = 0;
-
             gint16 value = 0;
             if(tonegen->sample_time < tonegen->tone_duration)
             {
-                tonegen->sample_phase += tonegen->tone_angular_rate * tonegen->sample_rate_inv;
-                if(tonegen->sample_phase > PI) tonegen->sample_phase -= 2. * PI;
-
                 // Quadratic curve sine approximation
                 float s, p = tonegen->sample_phase;
                 s = p < 0 ? (4. / PI) * p + 4. / (PI * PI) * p * p : (4. / PI) * p - 4. / (PI * PI) * p * p;
                 s = s < 0 ? .225 * (s * -s - s) + s : .225 * (s *  s - s) + s;
                 value = G_MAXINT16 * tonegen->tone_amplitude * s;
+
+                tonegen->sample_phase += 2. * PI * tonegen->tone_frequency / tonegen->sample_rate;
+                if(tonegen->sample_phase > PI) tonegen->sample_phase -= 2. * PI;
             }
 
             guint channels = tonegen->channels;
             while(channels--) *ptr++ = value;
+
+            tonegen->sample_time += 1. / tonegen->sample_rate;
+            if(tonegen->sample_time > tonegen->tone_duration + tonegen->pause_duration)
+                tonegen->sample_time = 0;
         }
 
         gst_buffer_unmap(buffer, &info);

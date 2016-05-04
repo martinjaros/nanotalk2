@@ -35,8 +35,8 @@ struct _GstToneGen
 {
     GstAudioFilter filter;
     gboolean enabled;
-    gfloat tone_amplitude, tone_angular_rate, tone_duration, pause_duration;
-    gfloat sample_phase, sample_time, sample_rate_inv;
+    gfloat tone_amplitude, tone_frequency, tone_duration, pause_duration;
+    gfloat sample_phase, sample_time, sample_rate;
     guint channels;
 };
 

@@ -12,8 +12,6 @@
  * GNU General Public License for more details.
  */
 
-#define G_LOG_DOMAIN "RtpDecrypt"
-
 #include <string.h>
 #include <sodium.h>
 #include <gst/rtp/rtp.h>
