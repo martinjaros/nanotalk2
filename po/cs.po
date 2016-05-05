@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: nanotalk 2.0.1\n"
 "Report-Msgid-Bugs-To: xjaros32@stud.feec.vutbr.cz\n"
-"POT-Creation-Date: 2016-04-29 16:03+0200\n"
-"PO-Revision-Date: 2016-04-28 20:38+0200\n"
+"POT-Creation-Date: 2016-05-05 03:09+0200\n"
+"PO-Revision-Date: 2016-05-05 03:09+0200\n"
 "Last-Translator: Martin Jaroš <xjaros32@stud.feec.vutbr.cz>\n"
 "Language-Team: \n"
 "Language: cs\n"
@@ -16,119 +16,190 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=3; plural=(n==1) ? 0 : (n>=2 && n<=4) ? 1 : 2;\n"
 
-#: src/main.c:43
+#: src/main.c:49
 msgid "Print program version"
 msgstr "Vypiš verzi programu"
 
-#: src/main.c:44
+#: src/main.c:50
 msgid "Configuration file"
 msgstr "Konfigurační soubor"
 
-#: src/main.c:44 src/main.c:45 src/main.c:48
+#: src/main.c:50 src/main.c:51 src/main.c:54
 msgid "FILE"
 msgstr "SOUBOR"
 
-#: src/main.c:45
+#: src/main.c:51
 msgid "Private key"
 msgstr "Soukromý klíč"
 
-#: src/main.c:48
+#: src/main.c:54
 msgid "List of aliases"
 msgstr "Seznam přezdívek"
 
-#: src/main.c:63 src/application.c:610
-msgid "Nanotalk distributed voice client"
-msgstr "Nanotalk distribuovaný hlasový klient"
+#: src/main.c:69 src/application.c:742
+msgid "Nanotalk distributed voice service client"
+msgstr "Nanotalk klient distribuové hlasové služby"
 
-#: src/application.c:182
+#: src/application.c:183
 #, c-format
 msgid "Answer an incoming call from <b>%s</b> ?"
 msgstr "Přijmout příchozí hovor od <b>%s</b> ?"
 
-#: src/application.c:400
+#: src/application.c:437
 msgid "Save changes"
 msgstr "Uložit změny"
 
-#: src/application.c:410
+#: src/application.c:447
 msgid "Nanotalk aliases"
 msgstr "Nanotalk přezdívky"
 
-#: src/application.c:436 src/application.c:439
+#: src/application.c:473 src/application.c:476
 msgid "packet"
 msgid_plural "packets"
 msgstr[0] "paket"
 msgstr[1] "pakety"
 msgstr[2] "paketů"
 
-#: src/application.c:504
+#: src/application.c:572
 msgid "Nanotalk configuration"
 msgstr "Nanotalk konfigurace"
 
-#: src/application.c:518
+#: src/application.c:585
+msgid "Status"
+msgstr "Stav"
+
+#: src/application.c:591
 msgid "Client ID"
 msgstr "ID klienta"
 
-#: src/application.c:527
+#: src/application.c:601
 msgid "Received"
 msgstr "Přijato"
 
-#: src/application.c:533
+#: src/application.c:607
 msgid "Sent"
 msgstr "Odesláno"
 
-#: src/application.c:539
+#: src/application.c:613
 msgid "Peers"
 msgstr "Spojení"
 
-#: src/application.c:554
+#: src/application.c:622
+msgid "Network"
+msgstr "Síť"
+
+#: src/application.c:629
 msgid "Enable IPv6"
 msgstr "Povolit IPv6"
 
-#: src/application.c:564
+#: src/application.c:638
+msgid "Enables IPv6 protocol support"
+msgstr "Povolí podporu protokolu IPv6"
+
+#: src/application.c:640
 msgid "Local port"
 msgstr "Lokální port"
 
-#: src/application.c:571
+#: src/application.c:647
+msgid ""
+"Local port to which the client is bound, this port needs to be forwarded on "
+"your router"
+msgstr ""
+"Lokální port použitý klientem, tento port je potřebné předávat směrovačem"
+
+#: src/application.c:649
 msgid "Bootstrap host"
 msgstr "Zaváděcí hostitel"
 
-#: src/application.c:579
+#: src/application.c:657
+msgid "Hostname or IP address used to join the network"
+msgstr "Jméno hostitele nebo IP adresa použitá k připojení do sítě"
+
+#: src/application.c:659
 msgid "Bootstrap port"
 msgstr "Zaváděcí port"
 
-#: src/application.c:590
+#: src/application.c:666
+msgid "Port number used by the boostrap host"
+msgstr "Číslo portu zaváděcího hostitele"
+
+#: src/application.c:671
+msgid "Audio"
+msgstr "Zvuk"
+
+#: src/application.c:678
+msgid "Echo cancellation"
+msgstr "Zamezit ozvěnu"
+
+#: src/application.c:687
+msgid "Enables echo cancellation on the PulseAudio server if available"
+msgstr "Povolí filtr zamezující ozvěnu na PulseAudio serveru pokud je dostupný"
+
+#: src/application.c:689
+msgid "Latency"
+msgstr "Zpoždění"
+
+#: src/application.c:696
+msgid ""
+"Receiver latency in milliseconds, set to a higher value if experiencing "
+"audio jitter"
+msgstr ""
+"Zpoždění přijímače v milisekundách, nastavení vyšší hodnoty zamezí praskání "
+"zkuku"
+
+#: src/application.c:698
+msgid "Bitrate"
+msgstr "Bitová rychlost"
+
+#: src/application.c:705
+msgid "Target bitrate of the audio encoder"
+msgstr "Cílová bitová rychlost kodéru zvuku"
+
+#: src/application.c:707
+msgid "Enable VBR"
+msgstr "Povolit VBR"
+
+#: src/application.c:716
+msgid "Enables variable bitrate encoding"
+msgstr "Povolí proměnnou bitovou rychlost"
+
+#: src/application.c:722
 msgid "Apply"
 msgstr "Potvrdit"
 
-#: src/application.c:594
+#: src/application.c:726
 msgid "Close"
 msgstr "Zavřít"
 
-#: src/application.c:635
+#: src/application.c:767
 msgid "Missing GStreamer Base Plugins"
 msgstr "Chybí GStreamer Base Plugins"
 
-#: src/application.c:645
+#: src/application.c:777
 msgid "Missing GStreamer Good Plugins"
 msgstr "Chybí GStreamer Good Plugins"
 
-#: src/application.c:654
+#: src/application.c:786
 msgid "Missing Opus plugin for GStreamer"
 msgstr "Chybí Opus plugin pro GStreamer"
 
-#: src/application.c:661
+#: src/application.c:793
 msgid "Cannot register GStreamer plugin"
 msgstr "Nelze zaregistrovat GStreamer plugin"
 
-#: src/application.c:755
+#: src/application.c:842
+msgid "Edit aliases"
+msgstr "Upravit přezdívky"
+
+#: src/application.c:887
 msgid "Preferences"
 msgstr "Nastavení"
 
-#: src/application.c:761
+#: src/application.c:893
 msgid "About"
 msgstr "O aplikaci"
 
-#: src/application.c:767
+#: src/application.c:899
 msgid "Quit"
 msgstr "Ukončit"
 

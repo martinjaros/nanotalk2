@@ -634,6 +634,8 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_widget_set_hexpand(app->switch_ipv6, TRUE);
     gtk_widget_set_halign(app->switch_ipv6, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(grid), app->switch_ipv6, 0, 0, 2, 1);
+    gtk_widget_set_tooltip_text(app->switch_ipv6,
+    		_("Enables IPv6 protocol support"));
 
     label = gtk_label_new(_("Local port"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
@@ -641,6 +643,8 @@ static void config_show(GtkWidget *widget, Application *app)
     app->spin_local_port = gtk_spin_button_new_with_range(0, G_MAXUINT16, 1);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_local_port), local_port);
     gtk_grid_attach(GTK_GRID(grid), app->spin_local_port, 1, 1, 1, 1);
+    gtk_widget_set_tooltip_text(app->spin_local_port,
+    		_("Local port to which the client is bound, this port needs to be forwarded on your router"));
 
     label = gtk_label_new(_("Bootstrap host"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
@@ -649,6 +653,8 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_entry_set_width_chars(GTK_ENTRY(app->entry_bootstrap_host), 30);
     gtk_entry_set_text(GTK_ENTRY(app->entry_bootstrap_host), bootstrap_host ?: "");
     gtk_grid_attach(GTK_GRID(grid), app->entry_bootstrap_host, 1, 2, 1, 1);
+    gtk_widget_set_tooltip_text(app->entry_bootstrap_host,
+    		_("Hostname or IP address used to join the network"));
 
     label = gtk_label_new(_("Bootstrap port"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
@@ -656,6 +662,8 @@ static void config_show(GtkWidget *widget, Application *app)
     app->spin_bootstrap_port = gtk_spin_button_new_with_range(0, G_MAXUINT16, 1);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_bootstrap_port), bootstrap_port);
     gtk_grid_attach(GTK_GRID(grid), app->spin_bootstrap_port, 1, 3, 1, 1);
+    gtk_widget_set_tooltip_text(app->spin_bootstrap_port,
+    		_("Port number used by the boostrap host"));
 
     // Audio page
     grid = gtk_grid_new();
@@ -675,6 +683,8 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_widget_set_hexpand(app->switch_echo, TRUE);
     gtk_widget_set_halign(app->switch_echo, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(grid), app->switch_echo, 1, 0, 2, 1);
+    gtk_widget_set_tooltip_text(app->switch_echo,
+    		_("Enables echo cancellation on the PulseAudio server if available"));
 
     label = gtk_label_new(_("Latency"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
@@ -682,6 +692,8 @@ static void config_show(GtkWidget *widget, Application *app)
     app->spin_latency = gtk_spin_button_new_with_range(0, 1000, 10);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_latency), latency);
     gtk_grid_attach(GTK_GRID(grid), app->spin_latency, 1, 1, 2, 1);
+    gtk_widget_set_tooltip_text(app->spin_latency,
+    		_("Receiver latency in milliseconds, set to a higher value if experiencing audio jitter"));
 
     label = gtk_label_new(_("Bitrate"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
@@ -689,6 +701,8 @@ static void config_show(GtkWidget *widget, Application *app)
     app->spin_bitrate = gtk_spin_button_new_with_range(4000, 650000, 1000);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_bitrate), bitrate);
     gtk_grid_attach(GTK_GRID(grid), app->spin_bitrate, 1, 2, 2, 1);
+    gtk_widget_set_tooltip_text(app->spin_bitrate,
+    		_("Target bitrate of the audio encoder"));
 
     label = gtk_label_new(_("Enable VBR"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
@@ -698,6 +712,8 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_widget_set_hexpand(app->switch_vbr, TRUE);
     gtk_widget_set_halign(app->switch_vbr, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(grid), app->switch_vbr, 1, 3, 2, 1);
+    gtk_widget_set_tooltip_text(app->switch_vbr,
+    		_("Enables variable bitrate encoding"));
 
     // Button box
     GtkWidget *hbox = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL);
@@ -723,7 +739,7 @@ static void about_show(GtkWidget *widget, Application *app)
         "logo-icon-name", "call-start-symbolic",
         "program-name", "nanotalk",
         "version", PACKAGE_VERSION,
-        "comments", _("Nanotalk distributed voice client"),
+        "comments", _("Nanotalk distributed voice service client"),
         "authors", authors,
         "license-type", GTK_LICENSE_GPL_2_0,
         "website", PACKAGE_URL,
@@ -823,7 +839,7 @@ Application* application_new(DhtClient *client, GKeyFile *config, const gchar *c
     g_signal_connect(app->entry, "activate", (GCallback)call_toggle, app);
     g_signal_connect(app->entry, "icon-press", (GCallback)editor_show, app);
     gtk_entry_set_width_chars(GTK_ENTRY(app->entry), 30);
-    g_object_set(app->entry, "secondary-icon-name", "address-book-new", "secondary-icon-tooltip-text", "Edit aliases", NULL);
+    g_object_set(app->entry, "secondary-icon-name", "address-book-new", "secondary-icon-tooltip-text", _("Edit aliases"), NULL);
 
     app->button_start = gtk_button_new_from_icon_name("call-start", GTK_ICON_SIZE_BUTTON);
     g_signal_connect(app->button_start, "clicked", (GCallback)call_start, app);

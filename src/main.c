@@ -66,7 +66,7 @@ static gboolean startup(int *argc, char ***argv, GError **error)
 
     g_autoptr(GOptionContext) context = g_option_context_new(NULL);
     g_option_context_add_main_entries(context, options, PACKAGE);
-    g_option_context_set_summary(context, _("Nanotalk distributed voice client"));
+    g_option_context_set_summary(context, _("Nanotalk distributed voice service client"));
     g_option_context_set_description(context, PACKAGE_BUGREPORT "\n" PACKAGE_URL);
 
 #ifdef ENABLE_GUI
