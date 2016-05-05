@@ -1,5 +1,5 @@
-Nanotalk distributed multimedia service
-=======================================
+Nanotalk distributed voice service client
+=========================================
 
 This is a simple, distributed voice client.
 It can be used for simple calls between nodes;
