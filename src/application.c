@@ -24,6 +24,7 @@
 #include <gst/gst.h>
 #include <glib/gi18n.h>
 #include "application.h"
+#include "preferences.h"
 
 #include "tonegen.h"
 #include "rtpencrypt.h"
@@ -243,7 +244,7 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
 
     GstElement *audio_src = NULL;
     GstElement *audio_sink = NULL;
-    if(g_key_file_get_boolean(app->config, "audio", "echo-cancel", NULL))
+    if(g_key_file_get_boolean(app->config, PREF_AUDIO_ECHO_CANCEL, NULL))
     {
         // PulseAudio setup
         audio_src = gst_element_factory_make("pulsesrc", "audio_src");
@@ -259,7 +260,7 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
             g_object_set(audio_sink, "stream-properties", props, NULL);
             gst_structure_free(props);
         }
-        else g_warning("Echo cancellation is supported only for PulseAudio");
+        else g_warning(_("Echo cancellation is supported only for PulseAudio"));
     }
 
     // Start receiver
@@ -283,10 +284,10 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
 
     GstElement *rtp_buf = gst_element_factory_make("rtpjitterbuffer", "rtp_buf");
 
-    g_autofree gchar *latency = g_key_file_get_value(app->config, "audio", "latency", NULL);
+    g_autofree gchar *latency = g_key_file_get_value(app->config, PREF_AUDIO_LATENCY, NULL);
     if(latency) gst_util_set_object_arg(G_OBJECT(rtp_buf), "latency", latency);
 
-    g_autofree gchar *buffer_mode = g_key_file_get_value(app->config, "audio", "buffer-mode", NULL);
+    g_autofree gchar *buffer_mode = g_key_file_get_value(app->config, PREF_AUDIO_BUFFER_MODE, NULL);
     if(buffer_mode) gst_util_set_object_arg(G_OBJECT(rtp_buf), "mode", buffer_mode);
 
     GstElement *audio_depay = gst_element_factory_make("rtpopusdepay", "audio_depay");
@@ -315,10 +316,10 @@ static void new_connection(DhtClient *client, const gchar *peer_id,
     GstElement *audio_enc = gst_element_factory_make("opusenc", "audio_enc");
     gst_util_set_object_arg(G_OBJECT(audio_enc), "audio-type", "voice");
 
-    g_autofree gchar *bitrate = g_key_file_get_value(app->config, "audio", "bitrate", NULL);
+    g_autofree gchar *bitrate = g_key_file_get_value(app->config, PREF_AUDIO_BITRATE, NULL);
     if(bitrate) gst_util_set_object_arg(G_OBJECT(audio_enc), "bitrate", bitrate);
 
-    gboolean enable_vbr = g_key_file_get_boolean(app->config, "audio", "enable-vbr", NULL);
+    gboolean enable_vbr = g_key_file_get_boolean(app->config, PREF_AUDIO_ENABLE_VBR, NULL);
     gst_util_set_object_arg(G_OBJECT(audio_enc), "bitrate-type", enable_vbr ? "constrained-vbr" : "cbr");
 
     GstElement *audio_pay = gst_element_factory_make("rtpopuspay", "audio_pay");
@@ -497,8 +498,8 @@ static void config_apply(GtkWidget *widget, Application *app)
     guint16 bootstrap_port = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(app->spin_bootstrap_port));
 
     DhtClient *client = NULL;
-    if((enable_ipv6 != g_key_file_get_boolean(app->config, "network", "enable-ipv6", NULL)) ||
-       (local_port != g_key_file_get_integer(app->config, "network", "local-port", NULL)))
+    if((enable_ipv6 != g_key_file_get_boolean(app->config, PREF_NETWORK_ENABLE_IPV6, NULL)) ||
+       (local_port != g_key_file_get_integer(app->config, PREF_NETWORK_LOCAL_PORT, NULL)))
     {
         g_autoptr(GBytes) key = NULL;
         g_object_get(app->client, "key", &key, NULL);
@@ -519,8 +520,8 @@ static void config_apply(GtkWidget *widget, Application *app)
         }
     }
 
-    g_autofree gchar *prev_bootstrap_host = g_key_file_get_string(app->config, "network", "bootstrap-host", NULL);
-    guint16 prev_bootstrap_port = g_key_file_get_integer(app->config, "network", "bootstrap-port", NULL);
+    g_autofree gchar *prev_bootstrap_host = g_key_file_get_string(app->config, PREF_NETWORK_BOOTSTRAP_HOST, NULL);
+    guint16 prev_bootstrap_port = g_key_file_get_integer(app->config, PREF_NETWORK_BOOTSTRAP_PORT, NULL);
     if(client || (g_strcmp0(bootstrap_host, prev_bootstrap_host) != 0) || (bootstrap_port != prev_bootstrap_port))
         dht_client_bootstrap(app->client, bootstrap_host, bootstrap_port);
 
@@ -539,15 +540,15 @@ static void config_apply(GtkWidget *widget, Application *app)
     }
 
     // Save configuration
-    g_key_file_set_boolean(app->config, "network", "enable-ipv6", enable_ipv6);
-    g_key_file_set_integer(app->config, "network", "local-port", local_port);
-    g_key_file_set_string(app->config, "network", "bootstrap-host", bootstrap_host);
-    g_key_file_set_integer(app->config, "network", "bootstrap-port", bootstrap_port);
+    g_key_file_set_boolean(app->config, PREF_NETWORK_ENABLE_IPV6, enable_ipv6);
+    g_key_file_set_integer(app->config, PREF_NETWORK_LOCAL_PORT, local_port);
+    g_key_file_set_string(app->config, PREF_NETWORK_BOOTSTRAP_HOST, bootstrap_host);
+    g_key_file_set_integer(app->config, PREF_NETWORK_BOOTSTRAP_PORT, bootstrap_port);
 
-    g_key_file_set_boolean(app->config, "audio", "echo-cancel", echo_cancel);
-    g_key_file_set_integer(app->config, "audio", "latency", latency);
-    g_key_file_set_integer(app->config, "audio", "bitrate", bitrate);
-    g_key_file_set_boolean(app->config, "audio", "enable-vbr", enable_vbr);
+    g_key_file_set_boolean(app->config, PREF_AUDIO_ECHO_CANCEL, echo_cancel);
+    g_key_file_set_integer(app->config, PREF_AUDIO_LATENCY, latency);
+    g_key_file_set_integer(app->config, PREF_AUDIO_BITRATE, bitrate);
+    g_key_file_set_boolean(app->config, PREF_AUDIO_ENABLE_VBR, enable_vbr);
 
     if(!g_key_file_save_to_file(app->config, app->config_file, &error))
         g_warning("%s", error->message);
@@ -621,10 +622,10 @@ static void config_show(GtkWidget *widget, Application *app)
     g_object_set(grid, "column-spacing", 10, "row-spacing", 5, "margin", 10, NULL);
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), grid, gtk_label_new(_("Network")));
 
-    gboolean enable_ipv6 = g_key_file_get_boolean(app->config, "network", "enable-ipv6", NULL);
-    guint16 local_port = g_key_file_get_integer(app->config, "network", "local-port", NULL);
-    g_autofree gchar *bootstrap_host = g_key_file_get_string(app->config, "network", "bootstrap-host", NULL);
-    guint16 bootstrap_port = g_key_file_get_integer(app->config, "network", "bootstrap-port", NULL);
+    gboolean enable_ipv6 = g_key_file_get_boolean(app->config, PREF_NETWORK_ENABLE_IPV6, NULL);
+    guint16 local_port = g_key_file_get_integer(app->config, PREF_NETWORK_LOCAL_PORT, NULL);
+    g_autofree gchar *bootstrap_host = g_key_file_get_string(app->config, PREF_NETWORK_BOOTSTRAP_HOST, NULL);
+    guint16 bootstrap_port = g_key_file_get_integer(app->config, PREF_NETWORK_BOOTSTRAP_PORT, NULL);
 
     label = gtk_label_new(_("Enable IPv6"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
@@ -635,7 +636,7 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_widget_set_halign(app->switch_ipv6, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(grid), app->switch_ipv6, 0, 0, 2, 1);
     gtk_widget_set_tooltip_text(app->switch_ipv6,
-    		_("Enables IPv6 protocol support"));
+        _("Enables IPv6 protocol support"));
 
     label = gtk_label_new(_("Local port"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
@@ -644,7 +645,7 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_local_port), local_port);
     gtk_grid_attach(GTK_GRID(grid), app->spin_local_port, 1, 1, 1, 1);
     gtk_widget_set_tooltip_text(app->spin_local_port,
-    		_("Local port to which the client is bound, this port needs to be forwarded on your router"));
+        _("Local port to which the client is bound, this port needs to be forwarded on your router"));
 
     label = gtk_label_new(_("Bootstrap host"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
@@ -654,7 +655,7 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_entry_set_text(GTK_ENTRY(app->entry_bootstrap_host), bootstrap_host ?: "");
     gtk_grid_attach(GTK_GRID(grid), app->entry_bootstrap_host, 1, 2, 1, 1);
     gtk_widget_set_tooltip_text(app->entry_bootstrap_host,
-    		_("Hostname or IP address used to join the network"));
+        _("Hostname or IP address used to join the network"));
 
     label = gtk_label_new(_("Bootstrap port"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
@@ -663,17 +664,17 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_bootstrap_port), bootstrap_port);
     gtk_grid_attach(GTK_GRID(grid), app->spin_bootstrap_port, 1, 3, 1, 1);
     gtk_widget_set_tooltip_text(app->spin_bootstrap_port,
-    		_("Port number used by the boostrap host"));
+        _("Port number used by the boostrap host"));
 
     // Audio page
     grid = gtk_grid_new();
     g_object_set(grid, "column-spacing", 10, "row-spacing", 5, "margin", 10, NULL);
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), grid, gtk_label_new(_("Audio")));
 
-    gboolean echo_cancel = g_key_file_get_boolean(app->config, "audio", "echo-cancel", NULL);
-    gboolean enable_vbr = g_key_file_get_boolean(app->config, "audio", "enable-vbr", NULL);
-    guint bitrate = g_key_file_get_integer(app->config, "audio", "bitrate", NULL);
-    guint latency = g_key_file_get_integer(app->config, "audio", "latency", NULL);
+    gboolean echo_cancel = g_key_file_get_boolean(app->config, PREF_AUDIO_ECHO_CANCEL, NULL);
+    gboolean enable_vbr = g_key_file_get_boolean(app->config, PREF_AUDIO_ENABLE_VBR, NULL);
+    guint bitrate = g_key_file_get_integer(app->config, PREF_AUDIO_BITRATE, NULL);
+    guint latency = g_key_file_get_integer(app->config, PREF_AUDIO_LATENCY, NULL);
 
     label = gtk_label_new(_("Echo cancellation"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
@@ -684,7 +685,7 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_widget_set_halign(app->switch_echo, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(grid), app->switch_echo, 1, 0, 2, 1);
     gtk_widget_set_tooltip_text(app->switch_echo,
-    		_("Enables echo cancellation on the PulseAudio server if available"));
+        _("Enables echo cancellation on the PulseAudio server if available"));
 
     label = gtk_label_new(_("Latency"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
@@ -693,7 +694,7 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_latency), latency);
     gtk_grid_attach(GTK_GRID(grid), app->spin_latency, 1, 1, 2, 1);
     gtk_widget_set_tooltip_text(app->spin_latency,
-    		_("Receiver latency in milliseconds, set to a higher value if experiencing audio jitter"));
+        _("Receiver latency in milliseconds, set to a higher value if experiencing audio jitter"));
 
     label = gtk_label_new(_("Bitrate"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
@@ -702,7 +703,7 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_bitrate), bitrate);
     gtk_grid_attach(GTK_GRID(grid), app->spin_bitrate, 1, 2, 2, 1);
     gtk_widget_set_tooltip_text(app->spin_bitrate,
-    		_("Target bitrate of the audio encoder"));
+        _("Target bitrate of the audio encoder"));
 
     label = gtk_label_new(_("Enable VBR"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
@@ -713,7 +714,7 @@ static void config_show(GtkWidget *widget, Application *app)
     gtk_widget_set_halign(app->switch_vbr, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(grid), app->switch_vbr, 1, 3, 2, 1);
     gtk_widget_set_tooltip_text(app->switch_vbr,
-    		_("Enables variable bitrate encoding"));
+        _("Enables variable bitrate encoding"));
 
     // Button box
     GtkWidget *hbox = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL);
