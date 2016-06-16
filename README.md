@@ -1,5 +1,5 @@
-Nanotalk distributed voice service client
-=========================================
+Nanotalk distributed voice client
+=================================
 
 This is a simple, distributed voice client.
 It can be used for simple calls between nodes;
@@ -8,7 +8,7 @@ The client will search the network by querying nodes it already knows and once t
 an encrypted audio stream is created.
 
 Build and install
----------------------------------------
+---------------------------------
 
 If building from git, you must first initialize the build system with `autoreconf -i`.
 
@@ -25,18 +25,16 @@ Dependencies:
  * GStreamer Good Plugins (for RTP)
  * GStreamer Bad Plugins (for Opus in pre-1.8 versions)
 
-If you want to build a server without GTK+ and GStreamer use `./confifure --disable-gui`.
+If you want to build a server without GTK+ and GStreamer use `./configure --disable-gui`.
 
 Running
----------------------------------------
+---------------------------------
 
 Upon first startup a new key is generated and saved together with default configuration to
 
     $HOME/.nanotalk/user.cfg
     $HOME/.nanotalk/user.key
     $HOME/.nanotalk/aliases.txt
-
-These paths may be optionally overridden from the command line, see `nanotalk --help`.
 
 An unique ID is assigned to each key.
 You may create a list of aliases for IDs you know. For example

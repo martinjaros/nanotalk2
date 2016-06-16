@@ -1,1 +1,8 @@
-Nanotalk 2.0.1 pre-release
+Nanotalk 2.1.0
+==============
+
+ * reworked key exchange, the protocol is not compatible with previous versions
+ * most of the DHT code was rewritten
+ * improvements for the DHT client, performance, security
+ * modular RTP session management
+

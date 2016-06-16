@@ -15,15 +15,9 @@
 #ifndef __APPLICATION_H__
 #define __APPLICATION_H__
 
-#include "dhtclient.h"
+#include "dht-client.h"
 
-typedef struct _application Application;
-
-void application_add_option_group(GOptionContext *context);
-
-Application* application_new(DhtClient *client, GKeyFile *config, const gchar *config_file, const gchar *aliases_file, GError **error);
-void application_free(Application *app);
-
-void application_run();
+void application_init(gint argc, gchar *argv[]);
+void application_run(DhtClient *client, GKeyFile *config);
 
 #endif /* __APPLICATION_H__ */

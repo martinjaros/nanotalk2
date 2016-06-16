@@ -1,13 +1,13 @@
 AM_CFLAGS = $(SODIUM_CFLAGS) $(GLIB_CFLAGS)
-LDADD = $(SODIUM_LIBS) $(GLIB_LIBS) $(LIBINTL)
-DEFS += -DLOCALEDIR=\"$(localedir)\"
+LDADD = $(SODIUM_LIBS) $(GLIB_LIBS)
 
 bin_PROGRAMS = nanotalk
-nanotalk_SOURCES = main.c dhtclient.c
-noinst_HEADERS = application.h dhtclient.h glib-compat.h tonegen.h rtpencrypt.h rtpdecrypt.h
+nanotalk_SOURCES = main.c dht-common.c dht-client.c
+noinst_HEADERS = dht-common.h dht-client.h glib-compat.h
 
 if ENABLE_GUI
 AM_CFLAGS += $(GTK_CFLAGS) $(GST_CFLAGS)
 LDADD += $(GTK_LIBS) $(GST_LIBS)
-nanotalk_SOURCES += application.c tonegen.c rtpencrypt.c rtpdecrypt.c
+nanotalk_SOURCES += application.c rtp-session.c rtp-src.c rtp-sink.c rtp-tone.c
+noinst_HEADERS += application.h rtp-session.h rtp-src.h rtp-sink.h rtp-tone.h
 endif

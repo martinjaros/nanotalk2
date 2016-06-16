@@ -1,9 +1,7 @@
-AC_INIT([Nanotalk], [2.0.1], [xjaros32@stud.feec.vutbr.cz], [nanotalk], [https://github.com/martinjaros/nanotalk2])
+AC_INIT([nanotalk], [2.1.0])
 
 AM_INIT_AUTOMAKE
 AC_PROG_CC([gcc])
-AM_GNU_GETTEXT([external])
-AM_GNU_GETTEXT_VERSION([0.18.3])
 
 AC_ARG_ENABLE([gui], AS_HELP_STRING([--disable-gui], [build without GUI]))
 AM_CONDITIONAL(ENABLE_GUI, [test "x$enable_gui" != "xno"])
@@ -47,5 +45,5 @@ AS_IF([test "x$enable_gui" != "xno"], [
 ])
 
 AC_CONFIG_HEADERS([config.h])
-AC_CONFIG_FILES([Makefile src/Makefile po/Makefile.in])
+AC_CONFIG_FILES([Makefile src/Makefile])
 AC_OUTPUT
