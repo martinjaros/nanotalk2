@@ -53,7 +53,9 @@ enum
 
 typedef struct _msg_node MsgNode;
 typedef struct _msg_lookup MsgLookup;
-typedef struct _msg_connection MsgConnection;
+typedef struct _msg_connection1 MsgConnection1;
+typedef struct _msg_connection2 MsgConnection2;
+typedef struct _msg_connection3 MsgConnection3;
 
 typedef struct _dht_node DhtNode;
 typedef struct _dht_query DhtQuery;
@@ -69,17 +71,33 @@ struct _msg_node
 
 struct _msg_lookup
 {
-    guint8 type;
+    guint8 type; // MSG_LOOKUP_REQ, MSG_LOOKUP_RES
     DhtId srcid;
     DhtId dstid;
     MsgNode nodes[0]; // up to DHT_NODE_COUNT
 };
 
-struct _msg_connection
+struct _msg_connection1
 {
-    guint8 type;
+    guint8 type; // MSG_CONNECTION_REQ
     DhtKey pubkey;
-    DhtKey nonces[0]; // source nonce, peer nonce (response only)
+    DhtKey nonce;
+};
+
+struct _msg_connection2
+{
+    guint8 type; // MSG_CONNECTION_RES
+    DhtKey pubkey;
+    DhtKey nonce;
+    DhtKey peer_nonce;
+    DhtKey auth_tag;
+};
+
+struct _msg_connection3
+{
+    guint8 type; // MSG_CONNECTION_RES
+    DhtKey peer_nonce;
+    DhtKey auth_tag;
 };
 
 struct _dht_node
@@ -105,8 +123,8 @@ struct _dht_lookup
 {
     DhtId id;
 
-    GHashTable *query_table; // <DhtAddress, DhtQuery>
-    GSequence *query_sequence; // <weak DhtQuery> (sorted by metric)
+    GSequence *query_sequence; // <DhtQuery>
+    GHashTable *query_table; // <DhtAddress, GSequenceIter>
     guint num_sources;
 
     GSList *results; // <GSimpleAsyncResult>
@@ -118,13 +136,14 @@ struct _dht_connection
     DhtId id;
     DhtKey nonce;
 
+    gboolean is_remote;
     guint timeout_source;
 
-    GSocket *socket;
-    GSocketAddress *sockaddr;
-    DhtKey enc_key, dec_key;
+    GSocket *socket; // nullable
+    GSocketAddress *sockaddr; // nullable
+    GSimpleAsyncResult *result; // nullable
+    DhtKey enc_key, dec_key, auth_tag;
 
-    GSimpleAsyncResult *result;
     DhtClient *client; // weak
 };
 
@@ -134,8 +153,6 @@ struct _dht_client_private
     DhtKey pubkey, privkey;
 
     GList *buckets; // <GList<DhtNode>>
-    GHashTable *cache; // <DhtId, DhtNode>
-
     GHashTable *lookup_table; // <DhtId, DhtLookup>
     GHashTable *connection_table; // <DhtKey, DhtConnection>
 
@@ -159,7 +176,6 @@ static void dht_client_finalize(GObject *obj);
 
 static void dht_client_update(DhtClient *client, const DhtId *id, const DhtAddress *addr, gboolean is_alive);
 static guint dht_client_search(DhtClient *client, const DhtId *id, MsgNode *nodes);
-static void dht_lookup_update1(DhtLookup *lookup, const DhtId *id, const DhtAddress *addr);
 static void dht_lookup_update(DhtLookup *lookup, const MsgNode *nodes, guint count);
 static void dht_lookup_dispatch(DhtLookup *lookup);
 
@@ -182,20 +198,48 @@ static void dht_client_class_init(DhtClientClass *client_class)
     object_class->get_property = dht_client_get_property;
     object_class->finalize = dht_client_finalize;
 
+    /**
+     * DhtClient:key:
+     * Private key, see dht_client_new().
+     */
     dht_client_properties[PROP_KEY] = g_param_spec_boxed("key", "Key", "Private key", DHT_TYPE_KEY,
             G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
+    /**
+     * DhtClient:id:
+     * Public ID, see dht_client_lookup_async().
+     */
     dht_client_properties[PROP_ID] = g_param_spec_boxed("id", "ID", "Public ID", DHT_TYPE_ID,
             G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
 
+    /**
+     * DhtClient:peers:
+     * Number of peers, see dht_client_bootstrap().
+     */
     dht_client_properties[PROP_PEERS] = g_param_spec_uint("peers", "Peers", "Number of peers", 0, G_MAXUINT, 0,
             G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
 
+    /**
+     * DhtClient:listen:
+     * Listen for incoming connections, see #DhtClient::new-connection.
+     */
     dht_client_properties[PROP_LISTEN] = g_param_spec_boolean("listen", "Listen", "Listen for incoming connections", FALSE,
             G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
     g_object_class_install_properties(object_class, PROP_LAST, dht_client_properties);
 
+    /**
+     * DhtClient::new-connection:
+     * @client: Object instance that emitted the signal
+     * @id: ID of the remote peer
+     * @socket: Connection socket
+     * @address: Remote peer address
+     * @enc_key: Encryption key
+     * @dec_key: Decryption key
+     *
+     * A signal emitted when a remote peer establishes a connection, see dht_client_lookup_async().
+     * Incoming connection are accepted only if the #DhtClient:listen property is set to %TRUE.
+     */
     dht_client_signals[SIGNAL_NEW_CONNECTION] = g_signal_new("new-connection",
             DHT_TYPE_CLIENT, G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(DhtClientClass, new_connection), NULL, NULL, NULL,
             G_TYPE_NONE, 5, DHT_TYPE_ID, G_TYPE_SOCKET, G_TYPE_SOCKET_ADDRESS, DHT_TYPE_KEY, DHT_TYPE_KEY);
@@ -208,14 +252,17 @@ static void dht_client_init(DhtClient *client)
     priv->buckets = g_list_alloc();
     priv->num_buckets = 1;
 
-    priv->cache = g_hash_table_new_full(dht_id_hash, dht_id_equal, NULL, dht_node_destroy_cb);
     priv->lookup_table = g_hash_table_new_full(dht_id_hash, dht_id_equal, NULL, dht_lookup_destroy_cb);
     priv->connection_table = g_hash_table_new_full(dht_key_hash, dht_key_equal, NULL, dht_connection_destroy_cb);
 
     // Create socket
     g_autoptr(GError) error = NULL;
     priv->socket = g_socket_new(DHT_ADDRESS_FAMILY, G_SOCKET_TYPE_DATAGRAM, G_SOCKET_PROTOCOL_UDP, &error);
-    if(error) g_error("%s", error->message);
+    if(error)
+    {
+        g_warning("%s", error->message);
+        return;
+    }
 
     // Attach sources
     g_autoptr(GSource) source = g_socket_create_source(priv->socket, G_IO_IN, NULL);
@@ -289,14 +336,16 @@ static void dht_client_finalize(GObject *obj)
     DhtClient *client = DHT_CLIENT(obj);
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
 
-    g_hash_table_destroy(priv->cache);
     g_hash_table_destroy(priv->lookup_table);
     g_hash_table_destroy(priv->connection_table);
     g_list_free_full(priv->buckets, dht_bucket_destroy_cb);
 
-    g_object_unref(priv->socket);
-    g_source_remove(priv->socket_source);
-    g_source_remove(priv->timeout_source);
+    if(priv->socket)
+    {
+        g_object_unref(priv->socket);
+        g_source_remove(priv->socket_source);
+        g_source_remove(priv->timeout_source);
+    }
 
     G_OBJECT_CLASS(dht_client_parent_class)->finalize(obj);
 }
@@ -309,16 +358,28 @@ gboolean dht_client_bind(DhtClient *client, GSocketAddress *address, gboolean al
     return g_socket_bind(priv->socket, address, allow_reuse, error);
 }
 
-gboolean dht_client_bootstrap(DhtClient *client, GSocketAddress *address, GError **error)
+void dht_client_bootstrap(DhtClient *client, GSocketAddress *address)
 {
-    g_return_val_if_fail(DHT_IS_CLIENT(client), FALSE);
+    g_return_if_fail(DHT_IS_CLIENT(client));
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
 
-    MsgLookup msg;
-    msg.type = MSG_LOOKUP_REQ;
-    msg.srcid = priv->id;
-    msg.dstid = priv->id;
-    return g_socket_send_to(priv->socket, address, (gchar*)&msg, sizeof(msg), NULL, error);
+    DhtLookup *lookup = g_hash_table_lookup(priv->lookup_table, &priv->id);
+    if(!lookup)
+    {
+        lookup = g_slice_new(DhtLookup);
+        lookup->client = client;
+        lookup->id = priv->id;
+        lookup->num_sources = 0;
+        lookup->query_sequence = g_sequence_new(dht_query_destroy_cb);
+        lookup->query_table = g_hash_table_new(dht_address_hash, dht_address_equal);
+        lookup->results = NULL;
+        g_hash_table_insert(priv->lookup_table, &lookup->id, lookup);
+    }
+
+    MsgNode node;
+    memset(node.id.data, 0, DHT_ID_SIZE);
+    dht_address_serialize(&node.addr, address);
+    dht_lookup_update(lookup, &node, 1);
 }
 
 void dht_client_lookup_async(DhtClient *client, const DhtId *id, GAsyncReadyCallback callback, gpointer user_data)
@@ -347,8 +408,8 @@ void dht_client_lookup_async(DhtClient *client, const DhtId *id, GAsyncReadyCall
     lookup->client = client;
     lookup->id = *id;
     lookup->num_sources = 0;
-    lookup->query_sequence = g_sequence_new(NULL);
-    lookup->query_table = g_hash_table_new_full(dht_address_hash, dht_address_equal, NULL, dht_query_destroy_cb);
+    lookup->query_sequence = g_sequence_new(dht_query_destroy_cb);
+    lookup->query_table = g_hash_table_new(dht_address_hash, dht_address_equal);
     lookup->results = g_slist_prepend(NULL, result);
     g_hash_table_insert(priv->lookup_table, &lookup->id, lookup);
 
@@ -356,7 +417,6 @@ void dht_client_lookup_async(DhtClient *client, const DhtId *id, GAsyncReadyCall
     MsgNode nodes[DHT_NODE_COUNT];
     guint count = dht_client_search(client, id, nodes);
     dht_lookup_update(lookup, nodes, count);
-    dht_lookup_dispatch(lookup);
 }
 
 gboolean dht_client_lookup_finish(DhtClient *client, GAsyncResult *result,
@@ -379,7 +439,7 @@ gboolean dht_client_lookup_finish(DhtClient *client, GAsyncResult *result,
 static void dht_client_update(DhtClient *client, const DhtId *id, const DhtAddress *addr, gboolean is_alive)
 {
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
-    g_debug("update node %08x (%s)", dht_id_hash(id), is_alive ? "alive" : "timed-out");
+    g_debug("Update node %08x (%s)", dht_id_hash(id), is_alive ? "alive" : "timed-out");
 
     DhtId metric;
     dht_id_xor(&metric, &priv->id, id);
@@ -442,8 +502,10 @@ static void dht_client_update(DhtClient *client, const DhtId *id, const DhtAddre
     node->id = *id;
 
     bucket->data = g_list_prepend(bucket->data, node);
-    priv->num_peers++;
     count++;
+
+    priv->num_peers++;
+    g_object_notify_by_pspec(G_OBJECT(client), dht_client_properties[PROP_PEERS]);
 
     // Split buckets
     while((count == DHT_NODE_COUNT) && !bucket->next)
@@ -509,12 +571,14 @@ static guint dht_client_search(DhtClient *client, const DhtId *id, MsgNode *node
                 }
                 else
                 {
-                    g_debug("delete node %08x", dht_id_hash(&node->id));
+                    g_debug("Delete node %08x", dht_id_hash(&node->id));
 
                     // Delete dead node
                     g_slice_free(DhtNode, node);
                     bucket->data = g_list_delete_link(bucket->data, link);
+
                     priv->num_peers--;
+                    g_object_notify_by_pspec(G_OBJECT(client), dht_client_properties[PROP_PEERS]);
                 }
 
                 link = next;
@@ -541,40 +605,6 @@ static guint dht_client_search(DhtClient *client, const DhtId *id, MsgNode *node
     return count;
 }
 
-static void dht_lookup_update1(DhtLookup *lookup, const DhtId *id, const DhtAddress *addr)
-{
-    DhtQuery *query = g_hash_table_lookup(lookup->query_table, addr);
-    if(query)
-    {
-        // Finalize existing query
-        query->is_alive = TRUE;
-        query->is_finished = TRUE;
-        if(query->timeout_source > 0)
-        {
-            g_source_remove(query->timeout_source);
-            query->timeout_source = 0;
-            lookup->num_sources--;
-        }
-    }
-    else
-    {
-        DhtId metric;
-        dht_id_xor(&metric, id, &lookup->id);
-
-        // Insert new finalized query
-        query = g_slice_new(DhtQuery);
-        query->lookup = lookup;
-        query->metric = metric;
-        query->addr = *addr;
-        query->is_alive = TRUE;
-        query->is_finished = TRUE;
-        query->timeout_source = 0;
-
-        g_hash_table_insert(lookup->query_table, &query->addr, query);
-        g_sequence_insert_sorted(lookup->query_sequence, query, dht_id_compare, NULL);
-    }
-}
-
 static void dht_lookup_update(DhtLookup *lookup, const MsgNode *nodes, guint count)
 {
     DhtClient *client = lookup->client;
@@ -587,6 +617,41 @@ static void dht_lookup_update(DhtLookup *lookup, const MsgNode *nodes, guint cou
         // Skip own ID
         if(dht_id_equal(&node->id, &priv->id))
             continue;
+
+        // Check if this is the target node
+        if(dht_id_equal(&node->id, &lookup->id))
+        {
+            while(lookup->results)
+            {
+                GSimpleAsyncResult *result = lookup->results->data;
+                lookup->results = g_slist_delete_link(lookup->results, lookup->results);
+
+                MsgConnection1 request;
+                request.type = MSG_CONNECTION_REQ;
+                request.pubkey = priv->pubkey;
+                dht_key_make_random(&request.nonce);
+
+                // Create connection
+                DhtConnection *connection = g_slice_new(DhtConnection);
+                connection->client = client;
+                connection->id = lookup->id;
+                connection->nonce = request.nonce;
+                connection->is_remote = FALSE;
+                connection->socket = NULL;
+                connection->sockaddr = dht_address_deserialize(&node->addr);
+                connection->result = result;
+                connection->timeout_source = g_timeout_add(DHT_TIMEOUT_MS, dht_connection_timeout_cb, connection);
+                g_hash_table_replace(priv->connection_table, &connection->nonce, connection);
+
+                // Send request
+                g_autoptr(GError) error = NULL;
+                g_socket_send_to(priv->socket, connection->sockaddr, (gchar*)&request, sizeof(MsgConnection1), NULL, &error);
+                if(error) g_debug("%s", error->message);
+            }
+
+            g_hash_table_remove(priv->lookup_table, &lookup->id);
+            return;
+        }
 
         if(!g_hash_table_contains(lookup->query_table, &node->addr))
         {
@@ -602,17 +667,19 @@ static void dht_lookup_update(DhtLookup *lookup, const MsgNode *nodes, guint cou
             query->is_finished = FALSE;
             query->timeout_source = 0;
 
-            g_hash_table_insert(lookup->query_table, &query->addr, query);
-            g_sequence_insert_sorted(lookup->query_sequence, query, dht_id_compare, NULL);
+            GSequenceIter *iter = g_sequence_search(lookup->query_sequence, query, dht_id_compare, NULL);
+            g_hash_table_insert(lookup->query_table, &query->addr, g_sequence_insert_before(iter, query));
         }
     }
+
+    dht_lookup_dispatch(lookup);
 }
 
 static void dht_lookup_dispatch(DhtLookup *lookup)
 {
     DhtClient *client = lookup->client;
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
-    g_debug("dispatching lookup %08x", dht_id_hash(&lookup->id));
+    g_debug("Dispatching lookup %08x", dht_id_hash(&lookup->id));
 
     guint num_alive = 0;
     GSequenceIter *iter = g_sequence_get_begin_iter(lookup->query_sequence);
@@ -627,8 +694,11 @@ static void dht_lookup_dispatch(DhtLookup *lookup)
             msg.srcid = priv->id;
             msg.dstid = lookup->id;
 
+            g_autoptr(GError) error = NULL;
             g_autoptr(GSocketAddress) sockaddr = dht_address_deserialize(&query->addr);
-            g_socket_send_to(priv->socket, sockaddr, (gchar*)&msg, sizeof(msg), NULL, NULL);
+            g_socket_send_to(priv->socket, sockaddr, (gchar*)&msg, sizeof(msg), NULL, &error);
+            if(error) g_debug("%s", error->message);
+
             query->timeout_source = g_timeout_add(DHT_TIMEOUT_MS, dht_query_timeout_cb, query);
             lookup->num_sources++;
         }
@@ -638,23 +708,33 @@ static void dht_lookup_dispatch(DhtLookup *lookup)
     }
 
     if(lookup->num_sources == 0)
+    {
+        while(lookup->results)
+        {
+            // Lookup failed, report error
+            GSimpleAsyncResult *result = lookup->results->data;
+            g_simple_async_result_set_error(result, G_IO_ERROR, G_IO_ERROR_HOST_NOT_FOUND, _("Lookup failed"));
+            g_simple_async_result_complete_in_idle(result);
+            g_object_unref(result);
+
+            lookup->results = g_slist_delete_link(lookup->results, lookup->results);
+        }
+
         g_hash_table_remove(priv->lookup_table, &lookup->id);
+    }
 }
 
 static gboolean dht_client_refresh_cb(gpointer arg)
 {
-    g_autoptr(DhtClient) client = g_object_ref(arg); // keep internal reference
+    DhtClient *client = arg;
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
-
-    // Clear cache
-    g_hash_table_remove_all(priv->cache);
 
     // Create lookup
     DhtLookup *lookup = g_slice_new(DhtLookup);
     lookup->client = client;
     lookup->num_sources = 0;
-    lookup->query_sequence = g_sequence_new(NULL);
-    lookup->query_table = g_hash_table_new_full(dht_address_hash, dht_address_equal, NULL, dht_query_destroy_cb);
+    lookup->query_sequence = g_sequence_new(dht_query_destroy_cb);
+    lookup->query_table = g_hash_table_new(dht_address_hash, dht_address_equal);
     lookup->results = NULL;
 
     // Generate ID
@@ -675,19 +755,22 @@ static gboolean dht_client_refresh_cb(gpointer arg)
     MsgNode nodes[DHT_NODE_COUNT];
     guint count = dht_client_search(client, &lookup->id, nodes);
     dht_lookup_update(lookup, nodes, count);
-    dht_lookup_dispatch(lookup);
 
     return G_SOURCE_CONTINUE;
 }
 
 static gboolean dht_client_receive_cb(GSocket *socket, GIOCondition condition, gpointer arg)
 {
-    g_autoptr(DhtClient) client = g_object_ref(arg); // keep internal reference
+    DhtClient *client = arg;
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
 
     guint8 buffer[MSG_MTU];
+
+    g_autoptr(GError) error = NULL;
     g_autoptr(GSocketAddress) sockaddr = NULL;
-    gssize len = g_socket_receive_from(socket, &sockaddr, (gchar*)buffer, sizeof(buffer), NULL, NULL);
+    gssize len = g_socket_receive_from(socket, &sockaddr, (gchar*)buffer, sizeof(buffer), NULL, &error);
+    if(error) g_debug("%s", error->message);
+
     if(len < 1) return G_SOURCE_CONTINUE;
 
     switch(buffer[0])
@@ -703,26 +786,15 @@ static gboolean dht_client_receive_cb(GSocket *socket, GIOCondition condition, g
             DhtAddress addr;
             dht_address_serialize(&addr, sockaddr);
 
-            if(dht_id_equal(&msg->dstid, &priv->id))
-            {
-                // Cache node
-                DhtNode *node = g_slice_new(DhtNode);
-                node->timestamp = g_get_monotonic_time();
-                node->id = msg->srcid;
-                node->addr = addr;
-                node->is_alive = TRUE;
-
-                g_hash_table_replace(priv->cache, &node->id, node);
-            }
-
-            g_debug("lookup request %08x -> %08x", dht_id_hash(&msg->srcid), dht_id_hash(&msg->dstid));
+            g_debug("Lookup request %08x -> %08x", dht_id_hash(&msg->srcid), dht_id_hash(&msg->dstid));
             dht_client_update(client, &msg->srcid, &addr, TRUE);
 
             // Send response
             msg->type = MSG_LOOKUP_RES;
             msg->srcid = priv->id;
             guint count = dht_client_search(client, &msg->dstid, msg->nodes);
-            g_socket_send_to(socket, sockaddr, (gchar*)buffer, len + count * sizeof(MsgNode), NULL, NULL);
+            g_socket_send_to(socket, sockaddr, (gchar*)buffer, len + count * sizeof(MsgNode), NULL, &error);
+            if(error) g_debug("%s", error->message);
             break;
         }
 
@@ -738,118 +810,86 @@ static gboolean dht_client_receive_cb(GSocket *socket, GIOCondition condition, g
             DhtAddress addr;
             dht_address_serialize(&addr, sockaddr);
 
-            DhtLookup *lookup = NULL;
-            if((priv->num_peers == 0) && dht_id_equal(&msg->dstid, &priv->id))
-            {
-                // Bootstrap
-                lookup = g_slice_new(DhtLookup);
-                lookup->client = client;
-                lookup->id = priv->id;
-                lookup->num_sources = 0;
-                lookup->query_sequence = g_sequence_new(NULL);
-                lookup->query_table = g_hash_table_new_full(dht_address_hash, dht_address_equal, NULL, dht_query_destroy_cb);
-                lookup->results = NULL;
-
-                g_hash_table_replace(priv->lookup_table, &lookup->id, lookup);
-            }
-
-            g_debug("lookup response %08x -> %08x", dht_id_hash(&msg->srcid), dht_id_hash(&msg->dstid));
+            g_debug("Lookup response %08x -> %08x", dht_id_hash(&msg->srcid), dht_id_hash(&msg->dstid));
             dht_client_update(client, &msg->srcid, &addr, TRUE);
 
-            lookup = lookup ?: g_hash_table_lookup(priv->lookup_table, &msg->dstid);
-            if(lookup)
+            // Find lookup
+            DhtLookup *lookup = g_hash_table_lookup(priv->lookup_table, &msg->dstid);
+            if(!lookup) break;
+
+            // Find query
+            GSequenceIter *iter = g_hash_table_lookup(lookup->query_table, &addr);
+            if(!iter) break;
+
+            // Update query
+            DhtQuery *query = g_sequence_get(iter);
+            query->is_finished = TRUE;
+            query->is_alive = TRUE;
+            if(query->timeout_source > 0)
             {
-                // Check if this is the target node
-                if(dht_id_equal(&msg->srcid, &lookup->id))
-                {
-                    while(lookup->results)
-                    {
-                        GSimpleAsyncResult *result = lookup->results->data;
-                        lookup->results = g_slist_delete_link(lookup->results, lookup->results);
-
-                        GError *error = NULL;
-                        GSocket *socket = g_socket_new(DHT_ADDRESS_FAMILY, G_SOCKET_TYPE_DATAGRAM, G_SOCKET_PROTOCOL_UDP, &error);
-                        if(error)
-                        {
-                            g_simple_async_result_take_error(result, error);
-                            g_simple_async_result_complete_in_idle(result);
-                            g_object_unref(result);
-                            continue;
-                        }
-
-                        // Send request
-                        MsgConnection *msg = (MsgConnection*)buffer;
-                        msg->type = MSG_CONNECTION_REQ;
-                        msg->pubkey = priv->pubkey;
-                        dht_key_make_random(&msg->nonces[0]);
-                        g_socket_send_to(socket, sockaddr, (gchar*)buffer, sizeof(MsgConnection) + DHT_KEY_SIZE, NULL, &error);
-                        if(error)
-                        {
-                            g_object_unref(socket);
-                            g_simple_async_result_take_error(result, error);
-                            g_simple_async_result_complete_in_idle(result);
-                            g_object_unref(result);
-                            continue;
-                        }
-
-                        // Create connection
-                        DhtConnection *connection = g_slice_new(DhtConnection);
-                        connection->client = client;
-                        connection->nonce = msg->nonces[0];
-                        connection->id = lookup->id;
-                        connection->sockaddr = NULL;
-                        connection->socket = socket;
-                        connection->result = result;
-                        connection->timeout_source = g_timeout_add(DHT_TIMEOUT_MS, dht_connection_timeout_cb, connection);
-                        g_hash_table_replace(priv->connection_table, &connection->nonce, connection);
-                    }
-
-                    g_hash_table_remove(priv->lookup_table, &lookup->id);
-                }
-                else
-                {
-                    dht_lookup_update1(lookup, &msg->srcid, &addr);
-                    dht_lookup_update(lookup, msg->nodes, count);
-                    dht_lookup_dispatch(lookup);
-                }
+                g_source_remove(query->timeout_source);
+                query->timeout_source = 0;
+                lookup->num_sources--;
             }
 
+            DhtId metric;
+            dht_id_xor(&metric, &msg->srcid, &lookup->id);
+            if(!dht_id_equal(&metric, &query->metric))
+            {
+                query->metric = metric;
+                g_sequence_sort_changed(iter, dht_id_compare, NULL);
+            }
+
+            // Update lookup
+            dht_lookup_update(lookup, msg->nodes, count);
             break;
         }
 
         case MSG_CONNECTION_REQ:
         {
-            if(len != sizeof(MsgConnection) + sizeof(DhtKey)) break;
-            MsgConnection *msg = (MsgConnection*)buffer;
+            if(len != sizeof(MsgConnection1)) break;
+            MsgConnection1 *msg = (MsgConnection1*)buffer;
 
             DhtId id;
             dht_id_from_pubkey(&id, &msg->pubkey);
             if(dht_id_equal(&id, &priv->id)) break;
 
-            g_debug("connection request %08x", dht_id_hash(&id));
+            g_debug("Connection request %08x", dht_id_hash(&id));
             if(priv->listen)
             {
-                DhtNode *node = g_hash_table_lookup(priv->cache, &id);
-                if(!node) break;
-
                 DhtKey shared;
                 if(!dht_key_make_shared(&shared, &priv->privkey, &msg->pubkey)) break;
 
-                g_autoptr(GSocketAddress) destaddr = dht_address_deserialize(&node->addr);
-                g_autoptr(GSocket) socket = g_socket_new(DHT_ADDRESS_FAMILY, G_SOCKET_TYPE_DATAGRAM, G_SOCKET_PROTOCOL_UDP, NULL);
-                if(!socket) break;
+                GSocket *socket = g_socket_new(DHT_ADDRESS_FAMILY, G_SOCKET_TYPE_DATAGRAM, G_SOCKET_PROTOCOL_UDP, &error);
+                if(error)
+                {
+                    g_debug("%s", error->message);
+                    break;
+                }
+
+                MsgConnection2 response;
+                response.type = MSG_CONNECTION_RES;
+                response.pubkey = priv->pubkey;
+                response.peer_nonce = msg->nonce;
+                dht_key_make_random(&response.nonce);
+
+                // Create connection
+                DhtConnection *connection = g_slice_new(DhtConnection);
+                dht_key_derive(&connection->enc_key, &response.auth_tag, &shared, &response.nonce, &msg->nonce);
+                dht_key_derive(&connection->dec_key, &connection->auth_tag, &shared, &msg->nonce, &response.nonce);
+                connection->nonce = response.nonce;
+                connection->client = client;
+                connection->id = id;
+                connection->is_remote = TRUE;
+                connection->result = NULL;
+                connection->sockaddr = NULL;
+                connection->socket = socket;
+                connection->timeout_source = g_timeout_add(DHT_TIMEOUT_MS, dht_connection_timeout_cb, connection);
+                g_hash_table_replace(priv->connection_table, &connection->nonce, connection);
 
                 // Send response
-                msg->type = MSG_CONNECTION_RES;
-                msg->pubkey = priv->pubkey;
-                msg->nonces[1] = msg->nonces[0];
-                dht_key_make_random(&msg->nonces[0]);
-                g_socket_send_to(socket, destaddr, (gchar*)buffer, len + sizeof(DhtKey), NULL, NULL);
-
-                DhtKey enc_key, dec_key;
-                dht_key_derive(&enc_key, &shared, &msg->nonces[0], &msg->nonces[1]);
-                dht_key_derive(&dec_key, &shared, &msg->nonces[1], &msg->nonces[0]);
-                g_signal_emit(client, dht_client_signals[SIGNAL_NEW_CONNECTION], 0, &id, socket, destaddr, &enc_key, &dec_key);
+                g_socket_send_to(socket, sockaddr, (gchar*)&response, sizeof(MsgConnection2), NULL, &error);
+                if(error) g_debug("%s", error->message);
             }
 
             break;
@@ -857,33 +897,78 @@ static gboolean dht_client_receive_cb(GSocket *socket, GIOCondition condition, g
 
         case MSG_CONNECTION_RES:
         {
-            if(len != sizeof(MsgConnection) + 2 * sizeof(DhtKey)) break;
-            MsgConnection *msg = (MsgConnection*)buffer;
-
-            DhtId id;
-            dht_id_from_pubkey(&id, &msg->pubkey);
-
-            g_debug("connection response %08x", dht_id_hash(&id));
-            DhtConnection *connection = g_hash_table_lookup(priv->connection_table, &msg->nonces[1]);
-            if(connection && dht_id_equal(&connection->id, &id))
+            if(len == sizeof(MsgConnection2))
             {
+                MsgConnection2 *msg = (MsgConnection2*)buffer;
+
+                DhtId id;
+                dht_id_from_pubkey(&id, &msg->pubkey);
+                g_debug("Connection response %08x", dht_id_hash(&id));
+
+                // Find connection
+                DhtConnection *connection = g_hash_table_lookup(priv->connection_table, &msg->peer_nonce);
+                if(!connection || connection->is_remote || !dht_id_equal(&connection->id, &id)) break;
+
                 DhtKey shared;
                 if(!dht_key_make_shared(&shared, &priv->privkey, &msg->pubkey)) break;
-                dht_key_derive(&connection->enc_key, &shared, &msg->nonces[1], &msg->nonces[0]);
-                dht_key_derive(&connection->dec_key, &shared, &msg->nonces[0], &msg->nonces[1]);
 
+                MsgConnection3 response;
+                response.type = MSG_CONNECTION_RES;
+                response.peer_nonce = msg->nonce;
+
+                // Derive keys and verify authentication tag
+                dht_key_derive(&connection->enc_key, &response.auth_tag, &shared, &connection->nonce, &msg->nonce);
+                dht_key_derive(&connection->dec_key, &connection->auth_tag, &shared, &msg->nonce, &connection->nonce);
+                if(!dht_key_equal(&connection->auth_tag, &msg->auth_tag)) break;
+
+                connection->socket = g_socket_new(DHT_ADDRESS_FAMILY, G_SOCKET_TYPE_DATAGRAM, G_SOCKET_PROTOCOL_UDP, &error);
+                if(error)
+                {
+                    g_debug("%s", error->message);
+                    break;
+                }
+
+                // Send response
+                g_socket_send_to(connection->socket, connection->sockaddr, (gchar*)&response, sizeof(MsgConnection3), NULL, &error);
+                if(error) g_debug("%s", error->message);
+
+                g_object_unref(connection->sockaddr);
                 connection->sockaddr = g_object_ref(sockaddr);
+
+                g_source_remove(connection->timeout_source);
+                connection->timeout_source = 0;
+
+                // Complete result
                 g_hash_table_steal(priv->connection_table, &connection->nonce);
                 g_simple_async_result_set_op_res_gpointer(connection->result, connection, dht_connection_destroy_cb);
                 g_simple_async_result_complete(connection->result);
                 g_clear_object(&connection->result);
+            }
+            else if(len == sizeof(MsgConnection3))
+            {
+                MsgConnection3 *msg = (MsgConnection3*)buffer;
+
+                // Find connection
+                DhtConnection *connection = g_hash_table_lookup(priv->connection_table, &msg->peer_nonce);
+                if(!connection || !connection->is_remote || !dht_key_equal(&connection->auth_tag, &msg->auth_tag)) break;
+                g_debug("Connection response %08x", dht_id_hash(&connection->id));
+
+                g_hash_table_steal(priv->connection_table, &connection->nonce);
+                if(priv->listen)
+                {
+                    // Signal result
+                    g_signal_emit(client, dht_client_signals[SIGNAL_NEW_CONNECTION], 0,
+                            &connection->id, connection->socket, connection->sockaddr, &connection->enc_key, &connection->dec_key);
+                }
+
+                dht_connection_destroy_cb(connection);
             }
 
             break;
         }
 
         default:
-            g_debug("unknown message code 0x%x", buffer[0]);
+            g_debug("Unknown message code 0x%x", buffer[0]);
     }
 
     return G_SOURCE_CONTINUE;
@@ -893,7 +978,7 @@ static gboolean dht_query_timeout_cb(gpointer arg)
 {
     DhtQuery *query = arg;
     DhtLookup *lookup = query->lookup;
-    g_autoptr(DhtClient) client = g_object_ref(lookup->client); // keep internal reference
+    DhtClient *client = lookup->client;
 
     DhtId id;
     dht_id_xor(&id, &query->metric, &lookup->id);
@@ -914,12 +999,15 @@ static gboolean dht_query_timeout_cb(gpointer arg)
 static gboolean dht_connection_timeout_cb(gpointer arg)
 {
     DhtConnection *connection = arg;
-    g_autoptr(DhtClient) client = g_object_ref(connection->client); // keep internal reference
+    DhtClient *client = connection->client;
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
 
-    g_simple_async_result_set_error(connection->result, G_IO_ERROR, G_IO_ERROR_TIMED_OUT, _("Operation timed out"));
-    g_simple_async_result_complete_in_idle(connection->result);
-    g_clear_object(&connection->result);
+    if(connection->result)
+    {
+        g_simple_async_result_set_error(connection->result, G_IO_ERROR, G_IO_ERROR_TIMED_OUT, _("Operation timed out"));
+        g_simple_async_result_complete_in_idle(connection->result);
+        g_clear_object(&connection->result);
+    }
 
     connection->timeout_source = 0;
     g_hash_table_remove(priv->connection_table, &connection->nonce);
@@ -973,7 +1061,7 @@ static void dht_result_destroy_cb(gpointer arg)
 {
     GSimpleAsyncResult *result = arg;
 
-    g_simple_async_result_set_error(result, G_IO_ERROR, G_IO_ERROR_HOST_NOT_FOUND, _("Lookup failed"));
+    g_simple_async_result_set_error(result, G_IO_ERROR, G_IO_ERROR_CANCELLED, _("Operation cancelled"));
     g_simple_async_result_complete_in_idle(result);
     g_object_unref(result);
 }
@@ -987,21 +1075,18 @@ static DhtClient *test_client2 = NULL;
 static void test_connection_cb(DhtClient *client, DhtId *id, GSocket *socket, GSocketAddress *address, DhtKey *enc_key, DhtKey *dec_key, gpointer arg)
 {
     g_message("new connection");
+
+    g_clear_object(&test_client2);
+    g_main_loop_quit(main_loop);
 }
 
 static void test_lookup_cb(GObject *obj, GAsyncResult *result, gpointer arg)
 {
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
     dht_client_lookup_finish(DHT_CLIENT(obj), result, NULL, NULL, NULL, NULL, &error);
-    if(error)
-    {
-        g_warning("%s", error->message);
-        g_clear_error(&error);
-    }
+    if(error) g_warning("%s", error->message);
 
     g_message("lookup finished");
-    g_clear_object(&test_client2);
-    g_main_loop_quit(main_loop);
 }
 
 static gboolean test_timeout_cb(gpointer arg)
@@ -1038,7 +1123,7 @@ static void test_run(GError **error)
 
     g_autoptr(GInetAddress) inaddr_loopback = g_inet_address_new_loopback(DHT_ADDRESS_FAMILY);
     g_autoptr(GSocketAddress) remote_address = g_inet_socket_address_new(inaddr_loopback, 5005);
-    if(!dht_client_bootstrap(test_client1, remote_address, error)) return;
+    dht_client_bootstrap(test_client1, remote_address);
 
     g_timeout_add(100, test_timeout_cb, NULL);
 }
@@ -1047,14 +1132,10 @@ int main()
 {
     main_loop = g_main_loop_new(NULL, FALSE);
 
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
     test_run(&error);
 
-    if(error)
-    {
-        g_warning("%s", error->message);
-        g_clear_error(&error);
-    }
+    if(error) g_warning("%s", error->message);
     else g_main_loop_run(main_loop);
 
     g_message("test finished");

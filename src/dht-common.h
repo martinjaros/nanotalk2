@@ -47,10 +47,10 @@ struct _DhtAddress
     guint8 data[DHT_ADDRESS_SIZE];
 };
 
-void dht_key_make_random(DhtKey *privkey);
+void dht_key_make_random(DhtKey *key);
 void dht_key_make_public(DhtKey *pubkey, const DhtKey *privkey);
 gboolean dht_key_make_shared(DhtKey *shared, const DhtKey *privkey, const DhtKey *pubkey);
-void dht_key_derive(DhtKey *key, const DhtKey *shared, const DhtKey *tx_nonce, const DhtKey *rx_nonce);
+void dht_key_derive(DhtKey *key, DhtKey *auth_tag, const DhtKey *secret, const DhtKey *tx_nonce, const DhtKey *rx_nonce);
 
 void dht_id_from_pubkey(DhtId *id, const DhtKey *pubkey);
 gboolean dht_id_from_string(DhtId *id, const gchar *str);
@@ -78,9 +78,9 @@ void dht_key_free(gpointer key);
 void dht_id_free(gpointer id);
 void dht_address_free(gpointer addr);
 
-G_DEFINE_AUTOPTR_CLEANUP_FUNC(DhtKey, dht_key_free);
-G_DEFINE_AUTOPTR_CLEANUP_FUNC(DhtId, dht_id_free);
-G_DEFINE_AUTOPTR_CLEANUP_FUNC(DhtAddress, dht_address_free);
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(DhtKey, dht_key_free)
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(DhtId, dht_id_free)
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(DhtAddress, dht_address_free)
 
 GType dht_key_get_type(void);
 GType dht_id_get_type(void);

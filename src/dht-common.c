@@ -26,9 +26,9 @@ static int init()
     return sodium_init();
 }
 
-void dht_key_make_random(DhtKey *privkey)
+void dht_key_make_random(DhtKey *key)
 {
-    randombytes_buf(privkey->data, DHT_KEY_SIZE);
+    randombytes_buf(key->data, DHT_KEY_SIZE);
 }
 
 void dht_key_make_public(DhtKey *pubkey, const DhtKey *privkey)
@@ -41,15 +41,18 @@ gboolean dht_key_make_shared(DhtKey *shared, const DhtKey *privkey, const DhtKey
     return crypto_scalarmult(shared->data, privkey->data, pubkey->data) == 0;
 }
 
-void dht_key_derive(DhtKey *key, const DhtKey *shared, const DhtKey *tx_nonce, const DhtKey *rx_nonce)
+void dht_key_derive(DhtKey *key, DhtKey *auth_tag, const DhtKey *shared, const DhtKey *tx_nonce, const DhtKey *rx_nonce)
 {
     crypto_generichash_state state;
+    DhtKey result[2];
 
-    crypto_generichash_init(&state, shared->data, DHT_KEY_SIZE, DHT_KEY_SIZE);
+    crypto_generichash_init(&state, shared->data, DHT_KEY_SIZE, 2 * DHT_KEY_SIZE);
     crypto_generichash_update(&state, tx_nonce->data, DHT_KEY_SIZE);
     crypto_generichash_update(&state, rx_nonce->data, DHT_KEY_SIZE);
-    crypto_generichash_final(&state, key->data, DHT_KEY_SIZE);
-    memset(&state, 0, sizeof(state));
+    crypto_generichash_final(&state, result[0].data, 2 * DHT_KEY_SIZE);
+
+    *key = result[0];
+    *auth_tag = result[1];
 }
 
 void dht_id_from_pubkey(DhtId *id, const DhtKey *pubkey)
