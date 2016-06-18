@@ -10,6 +10,5 @@ if ENABLE_GUI
 AM_CFLAGS += $(GTK_CFLAGS) $(GST_CFLAGS)
 LDADD += $(GTK_LIBS) $(GST_LIBS)
 nanotalk_SOURCES += application.c tonegen.c rtpencrypt.c rtpdecrypt.c
+test_SOURCES = dht-common.c dht-client.c rtp-src.c rtp-sink.c
 endif
-
-test_SOURCES = dht-common.c dht-client.c

@@ -32,14 +32,13 @@ struct _DhtClientClass
      * DhtClientClass::new_connection:
      * @client: Object instance that emitted the signal
      * @id: ID of the remote peer
-     * @socket: Connection socket
-     * @address: Remote peer address
+     * @socket: Connected socket
      * @enc_key: Encryption key
      * @dec_key: Decryption key
      *
      * A virtual method implementing the #DhtClient::new-connection signal.
      */
-    void (*new_connection)(DhtClient *client, DhtId *id, GSocket *socket, GSocketAddress *address, DhtKey *enc_key, DhtKey *dec_key);
+    void (*new_connection)(DhtClient *client, DhtId *id, GSocket *socket, DhtKey *enc_key, DhtKey *dec_key);
 };
 
 /**
@@ -92,8 +91,7 @@ void dht_client_lookup_async(DhtClient *client, const DhtId *id, GAsyncReadyCall
  * dht_client_lookup_finish:
  * @client: Object instance
  * @result: The result passed to #GAsyncReadyCallback
- * @socket: (allow-none): Connection socket
- * @address: (allow-none): Remote peer address
+ * @socket: (allow-none): Connected socket
  * @enc_key: (allow-none): Encryption key
  * @dec_key: (allow-none): Decryption key
  * @error: (allow-none): Output location for errors
@@ -102,7 +100,6 @@ void dht_client_lookup_async(DhtClient *client, const DhtId *id, GAsyncReadyCall
  *
  * Returns: %TRUE on success, %FALSE otherwise with @error set appropriately
  */
-gboolean dht_client_lookup_finish(DhtClient *client, GAsyncResult *result,
-        GSocket **socket, GSocketAddress **address, DhtKey *enc_key, DhtKey *dec_key, GError **error);
+gboolean dht_client_lookup_finish(DhtClient *client, GAsyncResult *result, GSocket **socket, DhtKey *enc_key, DhtKey *dec_key, GError **error);
 
 #endif /* __DHT_CLIENT_H__ */

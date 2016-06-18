@@ -232,8 +232,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      * DhtClient::new-connection:
      * @client: Object instance that emitted the signal
      * @id: ID of the remote peer
-     * @socket: Connection socket
-     * @address: Remote peer address
+     * @socket: Connected socket
      * @enc_key: Encryption key
      * @dec_key: Decryption key
      *
@@ -242,7 +241,7 @@ static void dht_client_class_init(DhtClientClass *client_class)
      */
     dht_client_signals[SIGNAL_NEW_CONNECTION] = g_signal_new("new-connection",
             DHT_TYPE_CLIENT, G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(DhtClientClass, new_connection), NULL, NULL, NULL,
-            G_TYPE_NONE, 5, DHT_TYPE_ID, G_TYPE_SOCKET, G_TYPE_SOCKET_ADDRESS, DHT_TYPE_KEY, DHT_TYPE_KEY);
+            G_TYPE_NONE, 4, DHT_TYPE_ID, G_TYPE_SOCKET, DHT_TYPE_KEY, DHT_TYPE_KEY);
 }
 
 static void dht_client_init(DhtClient *client)
@@ -419,8 +418,7 @@ void dht_client_lookup_async(DhtClient *client, const DhtId *id, GAsyncReadyCall
     dht_lookup_update(lookup, nodes, count);
 }
 
-gboolean dht_client_lookup_finish(DhtClient *client, GAsyncResult *result,
-        GSocket **socket, GSocketAddress **address, DhtKey *enc_key, DhtKey *dec_key, GError **error)
+gboolean dht_client_lookup_finish(DhtClient *client, GAsyncResult *result, GSocket **socket, DhtKey *enc_key, DhtKey *dec_key, GError **error)
 {
     g_return_val_if_fail(DHT_IS_CLIENT(client), FALSE);
 
@@ -429,7 +427,6 @@ gboolean dht_client_lookup_finish(DhtClient *client, GAsyncResult *result,
 
     DhtConnection *connection = g_simple_async_result_get_op_res_gpointer(G_SIMPLE_ASYNC_RESULT(result));
     if(socket) *socket = g_object_ref(connection->socket);
-    if(address) *address = g_object_ref(connection->sockaddr);
     if(enc_key) *enc_key = connection->enc_key;
     if(dec_key) *dec_key = connection->dec_key;
 
@@ -932,13 +929,11 @@ static gboolean dht_client_receive_cb(GSocket *socket, GIOCondition condition, g
                 g_socket_send_to(connection->socket, connection->sockaddr, (gchar*)&response, sizeof(MsgConnection3), NULL, &error);
                 if(error) g_debug("%s", error->message);
 
-                g_object_unref(connection->sockaddr);
-                connection->sockaddr = g_object_ref(sockaddr);
-
                 g_source_remove(connection->timeout_source);
                 connection->timeout_source = 0;
 
                 // Complete result
+                g_socket_connect(connection->socket, sockaddr, NULL, NULL);
                 g_hash_table_steal(priv->connection_table, &connection->nonce);
                 g_simple_async_result_set_op_res_gpointer(connection->result, connection, dht_connection_destroy_cb);
                 g_simple_async_result_complete(connection->result);
@@ -957,8 +952,9 @@ static gboolean dht_client_receive_cb(GSocket *socket, GIOCondition condition, g
                 if(priv->listen)
                 {
                     // Signal result
+                    g_socket_connect(connection->socket, sockaddr, NULL, NULL);
                     g_signal_emit(client, dht_client_signals[SIGNAL_NEW_CONNECTION], 0,
-                            &connection->id, connection->socket, connection->sockaddr, &connection->enc_key, &connection->dec_key);
+                            &connection->id, connection->socket, &connection->enc_key, &connection->dec_key);
                 }
 
                 dht_connection_destroy_cb(connection);
@@ -1072,34 +1068,52 @@ static GMainLoop *main_loop = NULL;
 static DhtClient *test_client1 = NULL;
 static DhtClient *test_client2 = NULL;
 
-static void test_connection_cb(DhtClient *client, DhtId *id, GSocket *socket, GSocketAddress *address, DhtKey *enc_key, DhtKey *dec_key, gpointer arg)
+static void test_connection_cb(DhtClient *client, DhtId *id, GSocket *socket, DhtKey *enc_key, DhtKey *dec_key, gpointer arg)
 {
-    g_message("new connection");
+    g_autoptr(GInetSocketAddress) local_address = G_INET_SOCKET_ADDRESS(g_socket_get_local_address(socket, NULL));
+    g_autofree gchar *local_str = g_inet_address_to_string(g_inet_socket_address_get_address(local_address));
+    guint16 local_port = g_inet_socket_address_get_port(local_address);
 
-    g_clear_object(&test_client2);
+    g_autoptr(GInetSocketAddress) remote_address = G_INET_SOCKET_ADDRESS(g_socket_get_remote_address(socket, NULL));
+    g_autofree gchar *remote_str = g_inet_address_to_string(g_inet_socket_address_get_address(remote_address));
+    guint16 remote_port = g_inet_socket_address_get_port(remote_address);
+
+    g_message("New connection %08x %s:%u (%08x) -> %s:%u (%08x)", dht_id_hash(id),
+            local_str, local_port, dht_key_hash(enc_key),
+            remote_str, remote_port, dht_key_hash(dec_key));
+
     g_main_loop_quit(main_loop);
 }
 
 static void test_lookup_cb(GObject *obj, GAsyncResult *result, gpointer arg)
 {
+    DhtKey enc_key, dec_key;
     g_autoptr(GError) error = NULL;
-    dht_client_lookup_finish(DHT_CLIENT(obj), result, NULL, NULL, NULL, NULL, &error);
+    g_autoptr(GSocket) socket = NULL;
+    dht_client_lookup_finish(DHT_CLIENT(obj), result, &socket, &enc_key, &dec_key, &error);
     if(error) g_warning("%s", error->message);
 
-    g_message("lookup finished");
+    g_autoptr(GInetSocketAddress) local_address = G_INET_SOCKET_ADDRESS(g_socket_get_local_address(socket, NULL));
+    g_autofree gchar *local_str = g_inet_address_to_string(g_inet_socket_address_get_address(local_address));
+    guint16 local_port = g_inet_socket_address_get_port(local_address);
+
+    g_autoptr(GInetSocketAddress) remote_address = G_INET_SOCKET_ADDRESS(g_socket_get_remote_address(socket, NULL));
+    g_autofree gchar *remote_str = g_inet_address_to_string(g_inet_socket_address_get_address(remote_address));
+    guint16 remote_port = g_inet_socket_address_get_port(remote_address);
+
+    g_message("Lookup finished %s:%u (%08x) -> %s:%u (%08x)",
+            local_str, local_port, dht_key_hash(&enc_key),
+            remote_str, remote_port, dht_key_hash(&dec_key));
 }
 
 static gboolean test_timeout_cb(gpointer arg)
 {
-    g_message("lookup start");
-
     g_autoptr(DhtId) id;
     g_object_get(test_client2, "id", &id, NULL);
-    //id->data[0] = 0;
 
+    g_message("Lookup %08x", dht_id_hash(id));
     dht_client_lookup_async(test_client1, id, test_lookup_cb, NULL);
 
-    g_clear_object(&test_client1);
     return G_SOURCE_REMOVE;
 }
 
@@ -1109,7 +1123,6 @@ static void test_run(GError **error)
     dht_key_make_random(&key1);
     dht_key_make_random(&key2);
 
-    g_message("test start");
     test_client1 = dht_client_new(&key1);
     test_client2 = dht_client_new(&key2);
     g_signal_connect(test_client2, "new-connection", (GCallback)test_connection_cb, NULL);
@@ -1138,7 +1151,8 @@ int main()
     if(error) g_warning("%s", error->message);
     else g_main_loop_run(main_loop);
 
-    g_message("test finished");
-    g_clear_pointer(&main_loop, g_main_loop_unref);
+    g_object_unref(test_client1);
+    g_object_unref(test_client2);
+    g_main_loop_unref(main_loop);
     return 0;
 }

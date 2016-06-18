@@ -72,7 +72,7 @@ gboolean dht_key_equal(gconstpointer a, gconstpointer b);
 gboolean dht_id_equal(gconstpointer a, gconstpointer b);
 gboolean dht_address_equal(gconstpointer a, gconstpointer b);
 
-gint dht_id_compare(gconstpointer a, gconstpointer b, gpointer);
+gint dht_id_compare(gconstpointer a, gconstpointer b, gpointer arg);
 
 void dht_key_free(gpointer key);
 void dht_id_free(gpointer id);
