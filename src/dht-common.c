@@ -41,7 +41,7 @@ gboolean dht_key_make_shared(DhtKey *shared, const DhtKey *privkey, const DhtKey
     return crypto_scalarmult(shared->data, privkey->data, pubkey->data) == 0;
 }
 
-void dht_key_derive(DhtKey *key, DhtKey *auth_tag, const DhtKey *shared, const DhtKey *tx_nonce, const DhtKey *rx_nonce)
+void dht_key_derive(DhtKey *key, DhtKey *tag, const DhtKey *shared, const DhtKey *tx_nonce, const DhtKey *rx_nonce)
 {
     crypto_generichash_state state;
     DhtKey result[2];
@@ -52,7 +52,7 @@ void dht_key_derive(DhtKey *key, DhtKey *auth_tag, const DhtKey *shared, const D
     crypto_generichash_final(&state, result[0].data, 2 * DHT_KEY_SIZE);
 
     *key = result[0];
-    *auth_tag = result[1];
+    *tag = result[1];
 }
 
 void dht_id_from_pubkey(DhtId *id, const DhtKey *pubkey)
@@ -90,7 +90,7 @@ void dht_id_xor(DhtId *res, const DhtId *a, const DhtId *b)
         res->data[i] = a->data[i] ^ b->data[i];
 }
 
-void dht_address_serialize(DhtAddress *addr, const GSocketAddress *sockaddr)
+void dht_address_serialize(DhtAddress *addr, GSocketAddress *sockaddr)
 {
     guint16 port = g_inet_socket_address_get_port(G_INET_SOCKET_ADDRESS(sockaddr));
     GInetAddress *inaddr = g_inet_socket_address_get_address(G_INET_SOCKET_ADDRESS(sockaddr));

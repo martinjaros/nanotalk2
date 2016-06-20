@@ -24,8 +24,8 @@ GST_DEBUG_CATEGORY_STATIC(rtp_sink_debug);
 enum
 {
     PROP_0,
-    PROP_SOCKET,
-    PROP_KEY
+    PROP_KEY,
+    PROP_SOCKET
 };
 
 static GstStaticPadTemplate rtp_sink_pad_template = GST_STATIC_PAD_TEMPLATE(
@@ -35,7 +35,7 @@ G_DEFINE_TYPE(RtpSink, rtp_sink, GST_TYPE_BASE_SINK)
 
 static void rtp_sink_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec);
 static void rtp_sink_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec);
-static GstFlowReturn rtp_sink_render(GstBaseSink *base, GstBuffer *buffer);
+static GstFlowReturn rtp_sink_render(GstBaseSink *basesink, GstBuffer *buffer);
 static void rtp_sink_finalize(GObject *object);
 
 static void rtp_sink_class_init(RtpSinkClass *sink_class)
@@ -45,26 +45,34 @@ static void rtp_sink_class_init(RtpSinkClass *sink_class)
     object_class->get_property = rtp_sink_get_property;
     object_class->finalize = rtp_sink_finalize;
 
-    g_object_class_install_property(object_class, PROP_SOCKET,
-        g_param_spec_object("socket", "Socket", "Connected socket", G_TYPE_SOCKET, G_PARAM_READWRITE));
-
     g_object_class_install_property(object_class, PROP_KEY,
-        g_param_spec_boxed("key", "Key", "Encryption key", G_TYPE_BYTES, G_PARAM_READWRITE));
+        g_param_spec_boxed("key", "Key", "Encryption key", DHT_TYPE_KEY, G_PARAM_CONSTRUCT_ONLY | G_PARAM_READABLE));
+
+    g_object_class_install_property(object_class, PROP_SOCKET,
+        g_param_spec_object("socket", "Socket", "Connected socket", G_TYPE_SOCKET, G_PARAM_CONSTRUCT_ONLY | G_PARAM_READABLE));
 
     GstElementClass *element_class = (GstElementClass*)sink_class;
     gst_element_class_add_pad_template(element_class, gst_static_pad_template_get(&rtp_sink_pad_template));
     gst_element_class_set_static_metadata(element_class,
             "RTP sink", "Sink/Network/RTP", "RTP packet sender", "Martin Jaros <xjaros32@stud.feec.vutbr.cz>");
 
-    GstBaseSinkClass *base_class = (GstBaseSinkClass*)sink_class;
-    base_class->render = rtp_sink_render;
+    GstBaseSinkClass *basesink_class = (GstBaseSinkClass*)sink_class;
+    basesink_class->render = rtp_sink_render;
 
     GST_DEBUG_CATEGORY_INIT(rtp_sink_debug, "rtpsink", 0, "RTP sink");
 }
 
 static void rtp_sink_init(RtpSink *sink)
 {
+    (void)sink;
+}
 
+RtpSink* rtp_sink_new(DhtKey *key, GSocket *socket)
+{
+    g_return_val_if_fail(key != NULL, NULL);
+    g_return_val_if_fail(socket != NULL, NULL);
+
+    return g_object_new(RTP_TYPE_SINK, "key", key, "socket", socket, NULL);
 }
 
 static void rtp_sink_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec)
@@ -73,15 +81,23 @@ static void rtp_sink_set_property(GObject *object, guint prop_id, const GValue *
 
     switch(prop_id)
     {
-        case PROP_SOCKET:
-            g_clear_object(&sink->socket);
-            sink->socket = g_object_ref(g_value_get_object(value));
-            break;
-
         case PROP_KEY:
-            sink->key = *((DhtKey*)g_value_get_boxed(value));
-            sink->roc = 0;
+        {
+            DhtKey *key = g_value_get_boxed(value);
+            g_return_if_fail(key != NULL);
+
+            sink->key = *key;
             break;
+        }
+
+        case PROP_SOCKET:
+        {
+            GSocket *socket = g_value_get_object(value);
+            g_return_if_fail(socket != NULL);
+
+            sink->socket = g_object_ref(socket);
+            break;
+        }
 
         default:
             G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -107,12 +123,12 @@ static void rtp_sink_get_property(GObject *object, guint prop_id, GValue *value,
     }
 }
 
-static GstFlowReturn rtp_sink_render(GstBaseSink *base, GstBuffer *buffer)
+static GstFlowReturn rtp_sink_render(GstBaseSink *basesink, GstBuffer *buffer)
 {
-    RtpSink *sink = RTP_SINK(base);
+    RtpSink *sink = RTP_SINK(basesink);
 
     GstMapInfo map;
-    if(sink->socket && (gst_buffer_get_size(buffer) > 12) && gst_buffer_map(buffer, &map, GST_MAP_READ))
+    if((gst_buffer_get_size(buffer) > 12) && gst_buffer_map(buffer, &map, GST_MAP_READ))
     {
         guint16 seq = GST_READ_UINT16_BE(map.data + 2);
         guint32 ssrc = GST_READ_UINT32_BE(map.data + 8);

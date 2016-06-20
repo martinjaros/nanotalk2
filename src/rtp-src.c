@@ -23,14 +23,12 @@ GST_DEBUG_CATEGORY_STATIC(rtp_src_debug);
 
 #define PACKET_MTU 1500
 
-#define DEFAULT_TIMEOUT 1000000000LL // 1 second
-
 enum
 {
     PROP_0,
+    PROP_KEY,
     PROP_SOCKET,
-    PROP_TIMEOUT,
-    PROP_KEY
+    PROP_TIMEOUT
 };
 
 typedef struct _RtpStream RtpStream;
@@ -41,9 +39,9 @@ struct _RtpStream
     guint16 seq_last;
 };
 
-static void rtp_stream_free(gpointer ptr)
+static void rtp_stream_free(gpointer stream)
 {
-    g_slice_free(RtpStream, ptr);
+    g_slice_free(RtpStream, stream);
 }
 
 static GstStaticPadTemplate rtp_src_pad_template = GST_STATIC_PAD_TEMPLATE(
@@ -53,10 +51,10 @@ G_DEFINE_TYPE(RtpSrc, rtp_src, GST_TYPE_PUSH_SRC)
 
 static void rtp_src_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec);
 static void rtp_src_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec);
-static gboolean rtp_src_negotiate(GstBaseSrc *base);
-static GstFlowReturn rtp_src_create(GstPushSrc *push, GstBuffer **buf);
-static gboolean rtp_src_unlock(GstBaseSrc *base);
-static gboolean rtp_src_unlock_stop(GstBaseSrc *base);
+static gboolean rtp_src_negotiate(GstBaseSrc *basesrc);
+static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **buf);
+static gboolean rtp_src_unlock(GstBaseSrc *basesrc);
+static gboolean rtp_src_unlock_stop(GstBaseSrc *basesrc);
 static void rtp_src_finalize(GObject *object);
 
 static void rtp_src_class_init(RtpSrcClass *src_class)
@@ -66,27 +64,27 @@ static void rtp_src_class_init(RtpSrcClass *src_class)
     object_class->get_property = rtp_src_get_property;
     object_class->finalize = rtp_src_finalize;
 
+    g_object_class_install_property(object_class, PROP_KEY,
+        g_param_spec_boxed("key", "Key", "Encryption key", DHT_TYPE_KEY, G_PARAM_CONSTRUCT_ONLY | G_PARAM_READABLE));
+
     g_object_class_install_property(object_class, PROP_SOCKET,
-        g_param_spec_object("socket", "Socket", "Connected socket", G_TYPE_SOCKET, G_PARAM_READWRITE));
+        g_param_spec_object("socket", "Socket", "Connected socket", G_TYPE_SOCKET, G_PARAM_CONSTRUCT_ONLY | G_PARAM_READABLE));
 
     g_object_class_install_property(object_class, PROP_TIMEOUT,
-        g_param_spec_int64("timeout", "Timeout", "Post EOS after timeout (ns)", -1, G_MAXINT64, DEFAULT_TIMEOUT, G_PARAM_READWRITE));
-
-    g_object_class_install_property(object_class, PROP_KEY,
-        g_param_spec_boxed("key", "Key", "Encryption key", G_TYPE_BYTES, G_PARAM_READWRITE));
+        g_param_spec_int64("timeout", "Timeout", "Post EOS after timeout (ns)", -1, G_MAXINT64, -1, G_PARAM_READWRITE));
 
     GstElementClass *element_class = (GstElementClass*)src_class;
     gst_element_class_add_pad_template(element_class, gst_static_pad_template_get(&rtp_src_pad_template));
     gst_element_class_set_static_metadata(element_class,
             "RTP source", "Source/Network/RTP", "RTP packet receiver", "Martin Jaros <xjaros32@stud.feec.vutbr.cz>");
 
-    GstBaseSrcClass *base_class = (GstBaseSrcClass*)src_class;
-    base_class->negotiate = rtp_src_negotiate;
-    base_class->unlock = rtp_src_unlock;
-    base_class->unlock_stop = rtp_src_unlock_stop;
+    GstBaseSrcClass *basesrc_class = (GstBaseSrcClass*)src_class;
+    basesrc_class->negotiate = rtp_src_negotiate;
+    basesrc_class->unlock = rtp_src_unlock;
+    basesrc_class->unlock_stop = rtp_src_unlock_stop;
 
-    GstPushSrcClass *push_class = (GstPushSrcClass*)src_class;
-    push_class->create = rtp_src_create;
+    GstPushSrcClass *pushsrc_class = (GstPushSrcClass*)src_class;
+    pushsrc_class->create = rtp_src_create;
 
     GST_DEBUG_CATEGORY_INIT(rtp_src_debug, "rtpsrc", 0, "RTP source");
 }
@@ -95,11 +93,19 @@ static void rtp_src_init(RtpSrc *src)
 {
     src->streams = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, rtp_stream_free);
     src->cancellable = g_cancellable_new();
-    src->timeout = DEFAULT_TIMEOUT;
+    src->timeout = -1;
 
     gst_base_src_set_live(GST_BASE_SRC(src), TRUE);
     gst_base_src_set_format(GST_BASE_SRC(src), GST_FORMAT_TIME);
     gst_base_src_set_do_timestamp(GST_BASE_SRC(src), TRUE);
+}
+
+RtpSrc* rtp_src_new(DhtKey *key, GSocket *socket, gint64 timeout)
+{
+    g_return_val_if_fail(key != NULL, NULL);
+    g_return_val_if_fail(socket != NULL, NULL);
+
+    return g_object_new(RTP_TYPE_SRC, "key", key, "socket", socket, "timeout", timeout, NULL);
 }
 
 static void rtp_src_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec)
@@ -108,17 +114,26 @@ static void rtp_src_set_property(GObject *object, guint prop_id, const GValue *v
 
     switch(prop_id)
     {
-        case PROP_SOCKET:
-            g_clear_object(&src->socket);
-            src->socket = g_object_ref(g_value_get_object(value));
+        case PROP_KEY:
+        {
+            DhtKey *key = g_value_get_boxed(value);
+            g_return_if_fail(key != NULL);
+
+            src->key = *key;
             break;
+        }
+
+        case PROP_SOCKET:
+        {
+            GSocket *socket = g_value_get_object(value);
+            g_return_if_fail(socket != NULL);
+
+            src->socket = g_object_ref(socket);
+            break;
+        }
 
         case PROP_TIMEOUT:
             src->timeout = g_value_get_int64(value);
-            break;
-
-        case PROP_KEY:
-            src->key = *((DhtKey*)g_value_get_boxed(value));
             break;
 
         default:
@@ -132,6 +147,10 @@ static void rtp_src_get_property(GObject *object, guint prop_id, GValue *value, 
 
     switch(prop_id)
     {
+        case PROP_KEY:
+            g_value_set_boxed(value, &src->key);
+            break;
+
         case PROP_SOCKET:
             g_value_set_object(value, src->socket);
             break;
@@ -140,34 +159,30 @@ static void rtp_src_get_property(GObject *object, guint prop_id, GValue *value, 
             g_value_set_int64(value, src->timeout);
             break;
 
-        case PROP_KEY:
-            g_value_set_boxed(value, &src->key);
-            break;
-
         default:
             G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
     }
 }
 
-static gboolean rtp_src_negotiate(GstBaseSrc *base)
+static gboolean rtp_src_negotiate(GstBaseSrc *basesrc)
 {
-    RtpSrc *src = RTP_SRC(base);
+    RtpSrc *src = RTP_SRC(basesrc);
 
-    if(GST_BASE_SRC_CLASS(rtp_src_parent_class)->negotiate(base))
+    if(GST_BASE_SRC_CLASS(rtp_src_parent_class)->negotiate(basesrc))
     {
         g_clear_object(&src->allocator);
-        gst_base_src_get_allocator(base, &src->allocator, &src->params);
+        gst_base_src_get_allocator(basesrc, &src->allocator, &src->params);
         return TRUE;
     }
 
     return FALSE;
 }
 
-static GstFlowReturn rtp_src_create(GstPushSrc *push, GstBuffer **buf)
+static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **buf)
 {
-    RtpSrc *src = RTP_SRC(push);
+    RtpSrc *src = RTP_SRC(pushsrc);
 
-    while(src->socket)
+    while(1)
     {
         GError *error = NULL;
         g_socket_condition_timed_wait(src->socket, G_IO_IN, src->timeout, src->cancellable, &error);
@@ -234,7 +249,7 @@ static GstFlowReturn rtp_src_create(GstPushSrc *push, GstBuffer **buf)
                 }
 
                 // Update stream state
-                stream->seq_last = seq_last;
+                stream->seq_last = seq;
                 stream->roc = roc;
 
                 *buf = buffer;
@@ -249,19 +264,21 @@ static GstFlowReturn rtp_src_create(GstPushSrc *push, GstBuffer **buf)
     return GST_FLOW_ERROR;
 }
 
-static gboolean rtp_src_unlock(GstBaseSrc *base)
+static gboolean rtp_src_unlock(GstBaseSrc *basesrc)
 {
-    RtpSrc *src = RTP_SRC(base);
+    RtpSrc *src = RTP_SRC(basesrc);
 
     g_cancellable_cancel(src->cancellable);
+
     return TRUE;
 }
 
-static gboolean rtp_src_unlock_stop(GstBaseSrc *base)
+static gboolean rtp_src_unlock_stop(GstBaseSrc *basesrc)
 {
-    RtpSrc *src = RTP_SRC(base);
+    RtpSrc *src = RTP_SRC(basesrc);
 
     g_cancellable_reset(src->cancellable);
+
     return TRUE;
 }
 

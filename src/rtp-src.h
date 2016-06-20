@@ -47,6 +47,8 @@ struct _RtpSrcClass
     GstElementClass parent_class;
 };
 
+RtpSrc* rtp_src_new(DhtKey *key, GSocket *socket, gint64 timeout);
+
 GType rtp_src_get_type(void);
 
 #endif /* __RTP_SRC_H__ */

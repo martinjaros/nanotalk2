@@ -50,14 +50,14 @@ struct _DhtAddress
 void dht_key_make_random(DhtKey *key);
 void dht_key_make_public(DhtKey *pubkey, const DhtKey *privkey);
 gboolean dht_key_make_shared(DhtKey *shared, const DhtKey *privkey, const DhtKey *pubkey);
-void dht_key_derive(DhtKey *key, DhtKey *auth_tag, const DhtKey *secret, const DhtKey *tx_nonce, const DhtKey *rx_nonce);
+void dht_key_derive(DhtKey *key, DhtKey *tag, const DhtKey *secret, const DhtKey *tx_nonce, const DhtKey *rx_nonce);
 
 void dht_id_from_pubkey(DhtId *id, const DhtKey *pubkey);
 gboolean dht_id_from_string(DhtId *id, const gchar *str);
 gchar* dht_id_to_string(const DhtId *id);
 void dht_id_xor(DhtId *res, const DhtId *a, const DhtId *b);
 
-void dht_address_serialize(DhtAddress *addr, const GSocketAddress *sockaddr);
+void dht_address_serialize(DhtAddress *addr, GSocketAddress *sockaddr);
 GSocketAddress* dht_address_deserialize(const DhtAddress *addr);
 
 gpointer dht_key_copy(gpointer key);

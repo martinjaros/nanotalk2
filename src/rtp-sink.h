@@ -40,6 +40,8 @@ struct _RtpSinkClass
     GstBaseSinkClass parent_class;
 };
 
+RtpSink* rtp_sink_new(DhtKey *key, GSocket *socket);
+
 GType rtp_sink_get_type(void);
 
 #endif /* __RTP_SINK_H__ */

@@ -43,12 +43,11 @@ struct _DhtClientClass
 
 /**
  * dht_client_new:
- * @key: (allow-none): Private key
+ * @key: Private key
  *
  * Creates new #DhtClient instance.
- * If @key is %NULL, then a random key is generated.
  *
- * Returns: #DhtClient instance
+ * Returns: #DhtClient instance or %NULL on failure
  */
 DhtClient* dht_client_new(DhtKey *key);
 
@@ -61,7 +60,7 @@ DhtClient* dht_client_new(DhtKey *key);
  *
  * Binds the internal socket to the specified address, see g_socket_bind().
  *
- * Returns: %TRUE on success, %FALSE otherwise with @error set appropriately
+ * Returns: %TRUE on success, %FALSE otherwise
  */
 gboolean dht_client_bind(DhtClient *client, GSocketAddress *address, gboolean allow_reuse, GError **error);
 
@@ -98,7 +97,7 @@ void dht_client_lookup_async(DhtClient *client, const DhtId *id, GAsyncReadyCall
  *
  * Retrieves the results from dht_client_lookup_async().
  *
- * Returns: %TRUE on success, %FALSE otherwise with @error set appropriately
+ * Returns: %TRUE on success, %FALSE otherwise
  */
 gboolean dht_client_lookup_finish(DhtClient *client, GAsyncResult *result, GSocket **socket, DhtKey *enc_key, DhtKey *dec_key, GError **error);
 

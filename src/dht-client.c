@@ -270,11 +270,6 @@ static void dht_client_init(DhtClient *client)
     priv->timeout_source = g_timeout_add(DHT_REFRESH_MS, dht_client_refresh_cb, client);
 }
 
-DhtClient* dht_client_new(DhtKey *key)
-{
-    return g_object_new(DHT_TYPE_CLIENT, "key", key, NULL);
-}
-
 static void dht_client_set_property(GObject *obj, guint prop_id, const GValue *value, GParamSpec *pspec)
 {
     DhtClient *client = DHT_CLIENT(obj);
@@ -285,7 +280,9 @@ static void dht_client_set_property(GObject *obj, guint prop_id, const GValue *v
         case PROP_KEY:
         {
             DhtKey *key = g_value_get_boxed(value);
-            if(key) priv->privkey = *key; else dht_key_make_random(&priv->privkey);
+            g_return_if_fail(key != NULL);
+
+            priv->privkey = *key;
             dht_key_make_public(&priv->pubkey, &priv->privkey);
             dht_id_from_pubkey(&priv->id, &priv->pubkey);
             break;
@@ -330,23 +327,11 @@ static void dht_client_get_property(GObject *obj, guint prop, GValue *value, GPa
     }
 }
 
-static void dht_client_finalize(GObject *obj)
+DhtClient* dht_client_new(DhtKey *key)
 {
-    DhtClient *client = DHT_CLIENT(obj);
-    DhtClientPrivate *priv = dht_client_get_instance_private(client);
+    g_return_val_if_fail(key != NULL, NULL);
 
-    g_hash_table_destroy(priv->lookup_table);
-    g_hash_table_destroy(priv->connection_table);
-    g_list_free_full(priv->buckets, dht_bucket_destroy_cb);
-
-    if(priv->socket)
-    {
-        g_object_unref(priv->socket);
-        g_source_remove(priv->socket_source);
-        g_source_remove(priv->timeout_source);
-    }
-
-    G_OBJECT_CLASS(dht_client_parent_class)->finalize(obj);
+    return g_object_new(DHT_TYPE_CLIENT, "key", key, NULL);
 }
 
 gboolean dht_client_bind(DhtClient *client, GSocketAddress *address, gboolean allow_reuse, GError **error)
@@ -360,6 +345,7 @@ gboolean dht_client_bind(DhtClient *client, GSocketAddress *address, gboolean al
 void dht_client_bootstrap(DhtClient *client, GSocketAddress *address)
 {
     g_return_if_fail(DHT_IS_CLIENT(client));
+    g_return_if_fail(G_IS_INET_SOCKET_ADDRESS(address));
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
 
     DhtLookup *lookup = g_hash_table_lookup(priv->lookup_table, &priv->id);
@@ -384,6 +370,7 @@ void dht_client_bootstrap(DhtClient *client, GSocketAddress *address)
 void dht_client_lookup_async(DhtClient *client, const DhtId *id, GAsyncReadyCallback callback, gpointer user_data)
 {
     g_return_if_fail(DHT_IS_CLIENT(client));
+    g_return_if_fail(id != NULL);
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
 
     // Fail if using own ID
@@ -421,7 +408,6 @@ void dht_client_lookup_async(DhtClient *client, const DhtId *id, GAsyncReadyCall
 gboolean dht_client_lookup_finish(DhtClient *client, GAsyncResult *result, GSocket **socket, DhtKey *enc_key, DhtKey *dec_key, GError **error)
 {
     g_return_val_if_fail(DHT_IS_CLIENT(client), FALSE);
-
     if(g_simple_async_result_propagate_error(G_SIMPLE_ASYNC_RESULT(result), error))
         return FALSE;
 
@@ -431,6 +417,25 @@ gboolean dht_client_lookup_finish(DhtClient *client, GAsyncResult *result, GSock
     if(dec_key) *dec_key = connection->dec_key;
 
     return TRUE;
+}
+
+static void dht_client_finalize(GObject *obj)
+{
+    DhtClient *client = DHT_CLIENT(obj);
+    DhtClientPrivate *priv = dht_client_get_instance_private(client);
+
+    g_hash_table_destroy(priv->lookup_table);
+    g_hash_table_destroy(priv->connection_table);
+    g_list_free_full(priv->buckets, dht_bucket_destroy_cb);
+
+    if(priv->socket)
+    {
+        g_object_unref(priv->socket);
+        g_source_remove(priv->socket_source);
+        g_source_remove(priv->timeout_source);
+    }
+
+    G_OBJECT_CLASS(dht_client_parent_class)->finalize(obj);
 }
 
 static void dht_client_update(DhtClient *client, const DhtId *id, const DhtAddress *addr, gboolean is_alive)
@@ -1108,11 +1113,12 @@ static void test_lookup_cb(GObject *obj, GAsyncResult *result, gpointer arg)
 
 static gboolean test_timeout_cb(gpointer arg)
 {
-    g_autoptr(DhtId) id;
-    g_object_get(test_client2, "id", &id, NULL);
+    g_autoptr(DhtId) id1, id2;
+    g_object_get(test_client1, "id", &id1, NULL);
+    g_object_get(test_client2, "id", &id2, NULL);
 
-    g_message("Lookup %08x", dht_id_hash(id));
-    dht_client_lookup_async(test_client1, id, test_lookup_cb, NULL);
+    g_message("Lookup %08x -> %08x", dht_id_hash(id1), dht_id_hash(id2));
+    dht_client_lookup_async(test_client1, id2, test_lookup_cb, NULL);
 
     return G_SOURCE_REMOVE;
 }
@@ -1151,6 +1157,7 @@ int main()
     if(error) g_warning("%s", error->message);
     else g_main_loop_run(main_loop);
 
+    g_message("Test finished");
     g_object_unref(test_client1);
     g_object_unref(test_client2);
     g_main_loop_unref(main_loop);
