@@ -44,10 +44,10 @@ struct _RtpSrc
 
 struct _RtpSrcClass
 {
-    GstElementClass parent_class;
+    GstPushSrcClass parent_class;
 };
 
-RtpSrc* rtp_src_new(DhtKey *key, GSocket *socket, gint64 timeout);
+GstElement* rtp_src_new(DhtKey *key, GSocket *socket, const gchar *name);
 
 GType rtp_src_get_type(void);
 

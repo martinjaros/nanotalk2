@@ -46,10 +46,12 @@ static void rtp_sink_class_init(RtpSinkClass *sink_class)
     object_class->finalize = rtp_sink_finalize;
 
     g_object_class_install_property(object_class, PROP_KEY,
-        g_param_spec_boxed("key", "Key", "Encryption key", DHT_TYPE_KEY, G_PARAM_CONSTRUCT_ONLY | G_PARAM_READABLE));
+        g_param_spec_boxed("key", "Key", "Encryption key", DHT_TYPE_KEY,
+                G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     g_object_class_install_property(object_class, PROP_SOCKET,
-        g_param_spec_object("socket", "Socket", "Connected socket", G_TYPE_SOCKET, G_PARAM_CONSTRUCT_ONLY | G_PARAM_READABLE));
+        g_param_spec_object("socket", "Socket", "Connected socket", G_TYPE_SOCKET,
+                G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     GstElementClass *element_class = (GstElementClass*)sink_class;
     gst_element_class_add_pad_template(element_class, gst_static_pad_template_get(&rtp_sink_pad_template));
@@ -67,12 +69,12 @@ static void rtp_sink_init(RtpSink *sink)
     (void)sink;
 }
 
-RtpSink* rtp_sink_new(DhtKey *key, GSocket *socket)
+GstElement* rtp_sink_new(DhtKey *key, GSocket *socket, const gchar *name)
 {
     g_return_val_if_fail(key != NULL, NULL);
     g_return_val_if_fail(socket != NULL, NULL);
 
-    return g_object_new(RTP_TYPE_SINK, "key", key, "socket", socket, NULL);
+    return g_object_new(RTP_TYPE_SINK, "key", key, "socket", socket, "name", name, NULL);
 }
 
 static void rtp_sink_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec)
@@ -144,20 +146,14 @@ static GstFlowReturn rtp_sink_render(GstBaseSink *basesink, GstBuffer *buffer)
         memcpy(packet, map.data, 12);
         crypto_aead_chacha20poly1305_ietf_encrypt(packet + 12, NULL, map.data + 12, map.size - 12, map.data, 12, NULL, nonce, sink->key.data);
 
-        GError *error = NULL;
+        g_autoptr(GError) error = NULL;
         g_socket_send(sink->socket, (gchar*)packet, sizeof(packet), NULL, &error);
-        if(error)
-        {
-            GST_ELEMENT_ERROR(sink, RESOURCE, WRITE, ("%s", error->message), (NULL));
-            g_error_free(error);
-        }
+        if(error) GST_ELEMENT_ERROR(sink, RESOURCE, WRITE, ("%s", error->message), (NULL));
 
         gst_buffer_unmap(buffer, &map);
-        gst_buffer_unref(buffer);
         return GST_FLOW_OK;
     }
 
-    gst_buffer_unref(buffer);
     return GST_FLOW_ERROR;
 }
 

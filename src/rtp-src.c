@@ -23,6 +23,8 @@ GST_DEBUG_CATEGORY_STATIC(rtp_src_debug);
 
 #define PACKET_MTU 1500
 
+#define DEFAULT_TIMEOUT 1000000000LL // 1 second
+
 enum
 {
     PROP_0,
@@ -65,13 +67,16 @@ static void rtp_src_class_init(RtpSrcClass *src_class)
     object_class->finalize = rtp_src_finalize;
 
     g_object_class_install_property(object_class, PROP_KEY,
-        g_param_spec_boxed("key", "Key", "Encryption key", DHT_TYPE_KEY, G_PARAM_CONSTRUCT_ONLY | G_PARAM_READABLE));
+        g_param_spec_boxed("key", "Key", "Encryption key", DHT_TYPE_KEY,
+                G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     g_object_class_install_property(object_class, PROP_SOCKET,
-        g_param_spec_object("socket", "Socket", "Connected socket", G_TYPE_SOCKET, G_PARAM_CONSTRUCT_ONLY | G_PARAM_READABLE));
+        g_param_spec_object("socket", "Socket", "Connected socket", G_TYPE_SOCKET,
+                G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     g_object_class_install_property(object_class, PROP_TIMEOUT,
-        g_param_spec_int64("timeout", "Timeout", "Post EOS after timeout (ns)", -1, G_MAXINT64, -1, G_PARAM_READWRITE));
+        g_param_spec_int64("timeout", "Timeout", "Post message after timeout (ns)", -1, G_MAXINT64, DEFAULT_TIMEOUT,
+                G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     GstElementClass *element_class = (GstElementClass*)src_class;
     gst_element_class_add_pad_template(element_class, gst_static_pad_template_get(&rtp_src_pad_template));
@@ -93,19 +98,19 @@ static void rtp_src_init(RtpSrc *src)
 {
     src->streams = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, rtp_stream_free);
     src->cancellable = g_cancellable_new();
-    src->timeout = -1;
+    src->timeout = DEFAULT_TIMEOUT;
 
     gst_base_src_set_live(GST_BASE_SRC(src), TRUE);
     gst_base_src_set_format(GST_BASE_SRC(src), GST_FORMAT_TIME);
     gst_base_src_set_do_timestamp(GST_BASE_SRC(src), TRUE);
 }
 
-RtpSrc* rtp_src_new(DhtKey *key, GSocket *socket, gint64 timeout)
+GstElement* rtp_src_new(DhtKey *key, GSocket *socket, const gchar *name)
 {
     g_return_val_if_fail(key != NULL, NULL);
     g_return_val_if_fail(socket != NULL, NULL);
 
-    return g_object_new(RTP_TYPE_SRC, "key", key, "socket", socket, "timeout", timeout, NULL);
+    return g_object_new(RTP_TYPE_SRC, "key", key, "socket", socket, "name", name, NULL);
 }
 
 static void rtp_src_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec)
@@ -184,19 +189,22 @@ static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **buf)
 
     while(1)
     {
-        GError *error = NULL;
+        g_autoptr(GError) error = NULL;
         g_socket_condition_timed_wait(src->socket, G_IO_IN, src->timeout, src->cancellable, &error);
         if(error)
         {
-            GstFlowReturn ret = GST_FLOW_ERROR;
             if(g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-                ret = GST_FLOW_FLUSHING;
-            else if(g_error_matches(error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT))
-                ret = GST_FLOW_EOS;
-            else GST_ELEMENT_ERROR(src, RESOURCE, READ, ("%s", error->message), (NULL));
+                return GST_FLOW_FLUSHING;
 
-            g_error_free(error);
-            return ret;
+            if(g_error_matches(error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT))
+            {
+                GstStructure *msg = gst_structure_new("RtpSrcTimeout", NULL, NULL);
+                gst_element_post_message(GST_ELEMENT(src), gst_message_new_element(GST_OBJECT(src), msg));
+                return GST_FLOW_EOS;
+            }
+
+            GST_ELEMENT_ERROR(src, RESOURCE, READ, ("%s", error->message), (NULL));
+            return GST_FLOW_ERROR;
         }
 
         guint8 packet[PACKET_MTU];
@@ -204,8 +212,6 @@ static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **buf)
         if(error)
         {
             GST_ELEMENT_ERROR(src, RESOURCE, READ, ("%s", error->message), (NULL));
-
-            g_error_free(error);
             return GST_FLOW_ERROR;
         }
 
