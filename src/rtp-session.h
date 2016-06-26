@@ -24,7 +24,7 @@ struct _RtpSessionClass
 {
     GObjectClass parent_class;
 
-    void (*on_timeout)(RtpSession *session);
+    void (*hangup)(RtpSession *session);
 };
 
 RtpSession* rtp_session_new();

@@ -23,7 +23,7 @@ GST_DEBUG_CATEGORY_STATIC(rtp_src_debug);
 
 #define PACKET_MTU 1500
 
-#define DEFAULT_TIMEOUT 1000000000LL // 1 second
+#define DEFAULT_TIMEOUT 1000000 // 1 second
 
 enum
 {
@@ -75,7 +75,7 @@ static void rtp_src_class_init(RtpSrcClass *src_class)
                 G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     g_object_class_install_property(object_class, PROP_TIMEOUT,
-        g_param_spec_int64("timeout", "Timeout", "Post message after timeout (ns)", -1, G_MAXINT64, DEFAULT_TIMEOUT,
+        g_param_spec_int64("timeout", "Timeout", "Socket timeout (us)", -1, G_MAXINT64, DEFAULT_TIMEOUT,
                 G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     GstElementClass *element_class = (GstElementClass*)src_class;
@@ -195,13 +195,6 @@ static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **buf)
         {
             if(g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
                 return GST_FLOW_FLUSHING;
-
-            if(g_error_matches(error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT))
-            {
-                GstStructure *msg = gst_structure_new("RtpSrcTimeout", NULL, NULL);
-                gst_element_post_message(GST_ELEMENT(src), gst_message_new_element(GST_OBJECT(src), msg));
-                return GST_FLOW_EOS;
-            }
 
             GST_ELEMENT_ERROR(src, RESOURCE, READ, ("%s", error->message), (NULL));
             return GST_FLOW_ERROR;

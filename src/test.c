@@ -11,11 +11,19 @@ static DhtClient *test_client2 = NULL;
 static RtpSession *test_session1 = NULL;
 static RtpSession *test_session2 = NULL;
 
-static gboolean test_timeout3_cb(gpointer arg)
+static void test_hangup_cb(gpointer arg)
 {
     rtp_session_stop(test_session1);
-    rtp_session_stop(test_session2);
+    g_object_unref(test_session1);
+
     g_main_loop_quit(main_loop);
+}
+
+static gboolean test_timeout3_cb(gpointer arg)
+{
+    g_message("Terminate session");
+    rtp_session_stop(test_session2);
+    g_object_unref(test_session2);
 
     return G_SOURCE_REMOVE;
 }
@@ -78,6 +86,8 @@ static void test_lookup_cb(GObject *obj, GAsyncResult *result, gpointer arg)
     rtp_session_prepare(test_session1, socket, &enc_key, &dec_key);
     rtp_session_echo_cancel(test_session1);
     rtp_session_start(test_session1);
+
+    g_signal_connect(test_session1, "hangup", (GCallback)test_hangup_cb, NULL);
 }
 
 static gboolean test_timeout1_cb(gpointer arg)
@@ -114,6 +124,7 @@ static void test_run(GError **error)
     dht_client_bootstrap(test_client1, remote_address);
 
     g_timeout_add(100, test_timeout1_cb, NULL);
+    g_timeout_add(10000, test_timeout3_cb, NULL);
 }
 
 int main(int argc, char *argv[])
@@ -125,12 +136,9 @@ int main(int argc, char *argv[])
     test_run(&error);
     if(error) g_error("%s", error->message);
 
-    g_timeout_add(10000, test_timeout3_cb, NULL);
     g_main_loop_run(main_loop);
 
     g_message("Test finished");
-    g_object_unref(test_session1);
-    g_object_unref(test_session2);
     g_object_unref(test_client1);
     g_object_unref(test_client2);
     g_main_loop_unref(main_loop);

@@ -39,7 +39,7 @@ enum
 
 enum
 {
-    SIGNAL_ON_TIMEOUT,
+    SIGNAL_HANGUP,
     LAST_SIGNAL
 };
 
@@ -49,9 +49,6 @@ struct _RtpSessionPrivate
 {
     GstElement *rx_pipeline, *tx_pipeline;
     guint rx_watch, tx_watch;
-
-    gboolean echo_cancel;
-    gdouble volume;
 
     gchar *audio_source, *audio_sink, *audio_encoder, *audio_decoder, *audio_payloader, *audio_depayloader;
 };
@@ -99,8 +96,8 @@ static void rtp_session_class_init(RtpSessionClass *session_class)
             g_param_spec_string("audio-depayloader", "Audio depayloader", "Audio depayloader element", DEFAULT_AUDIO_DEPAYLOADER,
                     G_PARAM_CONSTRUCT | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-    rtp_session_signals[SIGNAL_ON_TIMEOUT] = g_signal_new("on-timeout",
-            RTP_TYPE_SESSION, G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(RtpSessionClass, on_timeout), NULL, NULL, NULL, G_TYPE_NONE, 0);
+    rtp_session_signals[SIGNAL_HANGUP] = g_signal_new("hangup",
+            RTP_TYPE_SESSION, G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(RtpSessionClass, hangup), NULL, NULL, NULL, G_TYPE_NONE, 0);
 }
 
 static void rtp_session_init(RtpSession *session)
@@ -116,8 +113,6 @@ static void rtp_session_init(RtpSession *session)
     GstBus *tx_bus = gst_pipeline_get_bus(GST_PIPELINE(priv->tx_pipeline));
     priv->tx_watch = gst_bus_add_watch(tx_bus, bus_watch_cb, session);
     gst_object_unref(tx_bus);
-
-    priv->volume = 1.0;
 }
 
 static void rtp_session_set_property(GObject *obj, guint prop_id, const GValue *value, GParamSpec *pspec)
@@ -211,20 +206,30 @@ void rtp_session_prepare(RtpSession *session, GSocket *socket, DhtKey *enc_key, 
     // Receiving pipeline
     GstElement *rtp_src = rtp_src_new(dec_key, socket, "rtp_src");
     GstElement *rtp_demux = gst_element_factory_make("rtpptdemux", "rtp_demux");
-    gst_bin_add_many(GST_BIN(priv->rx_pipeline), rtp_src, rtp_demux, NULL);
-    gst_element_link_many(rtp_src, rtp_demux, NULL);
+    GstElement *audio_buffer = gst_element_factory_make("rtpjitterbuffer", "audio_buffer");
+    GstElement *audio_depay = gst_element_factory_make(priv->audio_depayloader, "audio_depay");
+    GstElement *audio_dec = gst_element_factory_make(priv->audio_decoder, "audio_dec");
+    GstElement *audio_volume = gst_element_factory_make("volume", "audio_volume");
+    GstElement *audio_sink = gst_element_factory_make(priv->audio_sink, "audio_sink");
+    gst_bin_add_many(GST_BIN(priv->rx_pipeline), rtp_src, rtp_demux, audio_buffer, audio_depay, audio_dec, audio_volume, audio_sink, NULL);
+    gst_element_link_many(audio_buffer, audio_depay, audio_dec, audio_volume, audio_sink, NULL);
+    gst_element_link(rtp_src, rtp_demux);
 
     g_signal_connect(rtp_demux, "request-pt-map", (GCallback)request_pt_map_cb, session);
     g_signal_connect(rtp_demux, "new-payload-type", (GCallback)new_payload_type_cb, session);
+
+#if !GST_CHECK_VERSION(1, 2, 6)
+    gst_util_set_object_arg(G_OBJECT(audio_buffer), "mode", "none");
+#endif
 
     // Transmitting pipeline
     GstElement *audio_src = gst_element_factory_make(priv->audio_source, "audio_src");
     GstElement *audio_tone = rtp_tone_new("audio_tone");
     GstElement *audio_enc = gst_element_factory_make(priv->audio_encoder, "audio_enc");
     GstElement *audio_pay = gst_element_factory_make(priv->audio_payloader, "audio_pay");
-    GstElement *audio_sink = rtp_sink_new(enc_key, socket, "audio_sink");
-    gst_bin_add_many(GST_BIN(priv->tx_pipeline), audio_src, audio_tone, audio_enc, audio_pay, audio_sink, NULL);
-    gst_element_link_many(audio_src, audio_tone, audio_enc, audio_pay, audio_sink, NULL);
+    GstElement *audio_sink_rtp = rtp_sink_new(enc_key, socket, "audio_sink");
+    gst_bin_add_many(GST_BIN(priv->tx_pipeline), audio_src, audio_tone, audio_enc, audio_pay, audio_sink_rtp, NULL);
+    gst_element_link_many(audio_src, audio_tone, audio_enc, audio_pay, audio_sink_rtp, NULL);
 }
 
 void rtp_session_echo_cancel(RtpSession *session)
@@ -232,14 +237,25 @@ void rtp_session_echo_cancel(RtpSession *session)
     g_return_if_fail(RTP_IS_SESSION(session));
     RtpSessionPrivate* priv = rtp_session_get_instance_private(session);
 
-    priv->echo_cancel = TRUE;
+    GstStructure *props = gst_structure_new("props",
+            "filter.want", G_TYPE_STRING, "echo-cancel",
+            NULL);
+
     GstElement *audio_src = gst_bin_get_by_name(GST_BIN(priv->tx_pipeline), "audio_src");
     if(audio_src)
     {
-        GstStructure *props = gst_structure_new("props", "filter.want", G_TYPE_STRING, "echo-cancel", NULL);
         g_object_set(audio_src, "stream-properties", props, NULL);
-        gst_structure_free(props);
+        g_object_unref(audio_src);
     }
+
+    GstElement *audio_sink = gst_bin_get_by_name(GST_BIN(priv->rx_pipeline), "audio_sink");
+    if(audio_sink)
+    {
+        g_object_set(audio_sink, "stream-properties", props, NULL);
+        g_object_unref(audio_sink);
+    }
+
+    gst_structure_free(props);
 }
 
 void rtp_session_set_tone(RtpSession *session, gboolean enable)
@@ -260,7 +276,6 @@ void rtp_session_set_volume(RtpSession *session, gdouble value)
     g_return_if_fail(RTP_IS_SESSION(session));
     RtpSessionPrivate *priv = rtp_session_get_instance_private(session);
 
-    priv->volume = value;
     GstElement *audio_volume = gst_bin_get_by_name(GST_BIN(priv->rx_pipeline), "audio_volume");
     if(audio_volume)
     {
@@ -333,7 +348,11 @@ static GstCaps* request_pt_map_cb(GstElement *element, guint pt, gpointer arg)
             return gst_caps_new_simple("application/x-rtp",
                     "media", G_TYPE_STRING, "audio",
                     "clock-rate", G_TYPE_INT, 48000,
+#if GST_CHECK_VERSION(1, 2, 8)
+                    "encoding-name", G_TYPE_STRING, "OPUS",
+#else
                     "encoding-name", G_TYPE_STRING, "X-GST-OPUS-DRAFT-SPITTKA-00",
+#endif
                     NULL);
 
         default:
@@ -350,34 +369,11 @@ static void new_payload_type_cb(GstElement *element, guint pt, GstPad *pad, gpoi
     {
         case 96:
         {
-            GstElement *audio_buffer = gst_element_factory_make("rtpjitterbuffer", "audio_buffer");
-            GstElement *audio_depay = gst_element_factory_make(priv->audio_depayloader, "audio_depay");
-            GstElement *audio_dec = gst_element_factory_make(priv->audio_decoder, "audio_dec");
-            GstElement *audio_volume = gst_element_factory_make("volume", "audio_volume");
-            GstElement *audio_sink = gst_element_factory_make(priv->audio_sink, "audio_sink");
-            gst_bin_add_many(GST_BIN(priv->rx_pipeline), audio_buffer, audio_depay, audio_dec, audio_volume, audio_sink, NULL);
-            gst_element_link_many(audio_buffer, audio_depay, audio_dec, audio_volume, audio_sink, NULL);
-
+            GstElement *audio_buffer = gst_bin_get_by_name(GST_BIN(priv->rx_pipeline), "audio_buffer");
             GstPad *sinkpad = gst_element_get_static_pad(audio_buffer, "sink");
             gst_pad_link(pad, sinkpad);
             gst_object_unref(sinkpad);
-
-#if !GST_CHECK_VERSION(1, 2, 6)
-            gst_util_set_object_arg(G_OBJECT(audio_buffer), "mode", "none");
-#endif
-            g_object_set(audio_volume, "volume", priv->volume, NULL);
-            if(priv->echo_cancel)
-            {
-                GstStructure *props = gst_structure_new("props", "filter.want", G_TYPE_STRING, "echo-cancel", NULL);
-                g_object_set(audio_sink, "stream-properties", props, NULL);
-                gst_structure_free(props);
-            }
-
-            gst_element_sync_state_with_parent(audio_buffer);
-            gst_element_sync_state_with_parent(audio_depay);
-            gst_element_sync_state_with_parent(audio_dec);
-            gst_element_sync_state_with_parent(audio_volume);
-            gst_element_sync_state_with_parent(audio_sink);
+            gst_object_unref(audio_buffer);
             break;
         }
 
@@ -405,17 +401,10 @@ static gboolean bus_watch_cb(GstBus *bus, GstMessage *message, gpointer arg)
         case GST_MESSAGE_ERROR:
         {
             g_autoptr(GError) error = NULL;
-            g_autofree gchar *debug = NULL;
-            gst_message_parse_error(message, &error, &debug);
-            g_warning("%s %s", error->message, debug);
-            break;
-        }
+            gst_message_parse_error(message, &error, NULL);
+            g_debug("%s", error->message);
 
-        case GST_MESSAGE_ELEMENT:
-        {
-            if(strcmp(gst_structure_get_name(gst_message_get_structure(message)), "RtpSrcTimeout") == 0)
-                g_signal_emit(session, rtp_session_signals[SIGNAL_ON_TIMEOUT], 0);
-
+            g_signal_emit(session, rtp_session_signals[SIGNAL_HANGUP], 0);
             break;
         }
 
