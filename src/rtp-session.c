@@ -14,6 +14,7 @@
 
 #define G_LOG_DOMAIN "RTP"
 
+#include <glib/gi18n.h>
 #include "rtp-src.h"
 #include "rtp-sink.h"
 #include "rtp-tone.h"
@@ -64,6 +65,14 @@ static void rtp_session_finalize(GObject *obj);
 static GstCaps* request_pt_map_cb(GstElement *element, guint pt, gpointer arg);
 static void new_payload_type_cb(GstElement *element, guint pt, GstPad *pad, gpointer arg);
 static gboolean bus_watch_cb(GstBus *bus, GstMessage *message, gpointer arg);
+
+static inline GstElement* assert_element(const gchar *factory, const gchar *name)
+{
+    GstElement *element = gst_element_factory_make(factory, name);
+    if(element == NULL) g_error(_("Missing GStreamer element: %s"), name);
+
+    return element;
+}
 
 static void rtp_session_class_init(RtpSessionClass *session_class)
 {
@@ -205,12 +214,12 @@ void rtp_session_prepare(RtpSession *session, GSocket *socket, DhtKey *enc_key, 
 
     // Receiving pipeline
     GstElement *rtp_src = rtp_src_new(dec_key, socket, "rtp_src");
-    GstElement *rtp_demux = gst_element_factory_make("rtpptdemux", "rtp_demux");
-    GstElement *audio_buffer = gst_element_factory_make("rtpjitterbuffer", "audio_buffer");
-    GstElement *audio_depay = gst_element_factory_make(priv->audio_depayloader, "audio_depay");
-    GstElement *audio_dec = gst_element_factory_make(priv->audio_decoder, "audio_dec");
-    GstElement *audio_volume = gst_element_factory_make("volume", "audio_volume");
-    GstElement *audio_sink = gst_element_factory_make(priv->audio_sink, "audio_sink");
+    GstElement *rtp_demux = assert_element("rtpptdemux", "rtp_demux");
+    GstElement *audio_buffer = assert_element("rtpjitterbuffer", "audio_buffer");
+    GstElement *audio_depay = assert_element(priv->audio_depayloader, "audio_depay");
+    GstElement *audio_dec = assert_element(priv->audio_decoder, "audio_dec");
+    GstElement *audio_volume = assert_element("volume", "audio_volume");
+    GstElement *audio_sink = assert_element(priv->audio_sink, "audio_sink");
     gst_bin_add_many(GST_BIN(priv->rx_pipeline), rtp_src, rtp_demux, audio_buffer, audio_depay, audio_dec, audio_volume, audio_sink, NULL);
     gst_element_link_many(audio_buffer, audio_depay, audio_dec, audio_volume, audio_sink, NULL);
     gst_element_link(rtp_src, rtp_demux);
@@ -223,10 +232,10 @@ void rtp_session_prepare(RtpSession *session, GSocket *socket, DhtKey *enc_key, 
 #endif
 
     // Transmitting pipeline
-    GstElement *audio_src = gst_element_factory_make(priv->audio_source, "audio_src");
+    GstElement *audio_src = assert_element(priv->audio_source, "audio_src");
     GstElement *audio_tone = rtp_tone_new("audio_tone");
-    GstElement *audio_enc = gst_element_factory_make(priv->audio_encoder, "audio_enc");
-    GstElement *audio_pay = gst_element_factory_make(priv->audio_payloader, "audio_pay");
+    GstElement *audio_enc = assert_element(priv->audio_encoder, "audio_enc");
+    GstElement *audio_pay = assert_element(priv->audio_payloader, "audio_pay");
     GstElement *audio_sink_rtp = rtp_sink_new(enc_key, socket, "audio_sink");
     gst_bin_add_many(GST_BIN(priv->tx_pipeline), audio_src, audio_tone, audio_enc, audio_pay, audio_sink_rtp, NULL);
     gst_element_link_many(audio_src, audio_tone, audio_enc, audio_pay, audio_sink_rtp, NULL);
@@ -379,7 +388,7 @@ static void new_payload_type_cb(GstElement *element, guint pt, GstPad *pad, gpoi
 
         default:
         {
-            g_warning("Unknown payload type %u", pt);
+            g_debug("Unknown payload type %u", pt);
             GstElement *fakesink = gst_element_factory_make("fakesink", NULL);
             gst_bin_add(GST_BIN(priv->rx_pipeline), fakesink);
 
