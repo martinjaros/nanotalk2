@@ -25,7 +25,6 @@
 #include "application.h"
 #include "rtp-session.h"
 
-#define DEFAULT_ECHO_CANCEL FALSE
 #define DEFAULT_BITRATE 64000
 #define DEFAULT_ENABLE_VBR FALSE
 
@@ -34,10 +33,10 @@ typedef struct _Application Application;
 struct _Application
 {
     GtkWidget *main_window, *main_entry, *button_start, *button_volume, *button_stop, *call_dialog;
-    GtkWidget *config_window, *label_peers, *spin_local_port, *entry_bootstrap_host, *spin_bootstrap_port;
-    GtkWidget *switch_echo, *spin_bitrate, *switch_vbr;
-    GtkWidget *status_menu, *editor_window;
+    GtkWidget *config_window, *spin_local_port, *entry_bootstrap_host, *spin_bootstrap_port, *spin_bitrate, *switch_vbr;
+    GtkWidget *editor_window, *status_menu;
     GtkStatusIcon *status_icon;
+    GBinding *binding_peers;
 
     GtkTextBuffer *aliases_buffer;
     GtkListStore *aliases_list;
@@ -50,7 +49,7 @@ struct _Application
     RtpSession *session;
 };
 
-static void lookup_finished(DhtClient *client, GAsyncResult *result, Application *app);
+static void lookup_finished_cb(DhtClient *client, GAsyncResult *result, Application *app);
 
 static void call_start(Application *app)
 {
@@ -60,7 +59,7 @@ static void call_start(Application *app)
 
     if(id)
     {
-        dht_client_lookup_async(app->client, id, (GAsyncReadyCallback)lookup_finished, app);
+        dht_client_lookup_async(app->client, id, (GAsyncReadyCallback)lookup_finished_cb, app);
         gtk_widget_set_sensitive(app->button_start, FALSE);
         g_object_set(app->client, "listen", FALSE, NULL);
     }
@@ -93,11 +92,6 @@ static void call_toggle(Application *app)
         call_stop(app);
 }
 
-static void volume_changed(Application *app, gdouble volume)
-{
-    if(app->session) rtp_session_set_volume(app->session, volume);
-}
-
 static gboolean dialog_run(Application *app)
 {
     app->call_dialog = gtk_message_dialog_new_with_markup(GTK_WINDOW(app->main_window),
@@ -111,18 +105,14 @@ static gboolean dialog_run(Application *app)
     app->call_dialog = NULL;
 
     if(response == GTK_RESPONSE_YES)
-    {
-        gdouble volume = 1.0;
-        g_object_get(app->button_volume, "value", &volume, NULL);
-        rtp_session_set_volume(app->session, volume);
         rtp_session_set_tone(app->session, FALSE);
-    }
-    else call_stop(app);
+    else
+        call_stop(app);
 
     return G_SOURCE_REMOVE;
 }
 
-static void lookup_finished(DhtClient *client, GAsyncResult *result, Application *app)
+static void lookup_finished_cb(DhtClient *client, GAsyncResult *result, Application *app)
 {
     DhtKey enc_key, dec_key;
     g_autoptr(GSocket) socket = NULL;
@@ -135,20 +125,14 @@ static void lookup_finished(DhtClient *client, GAsyncResult *result, Application
         return;
     }
 
-    gboolean echo_cancel = g_key_file_get_boolean(app->config, "audio", "echo-cancel", NULL);
+    app->session = rtp_session_new(socket, &enc_key, &dec_key);
+    g_signal_connect_swapped(app->session, "hangup", (GCallback)call_stop, app);
+
     guint bitrate = g_key_file_get_integer(app->config, "audio", "bitrate", NULL);
     gboolean enable_vbr = g_key_file_get_boolean(app->config, "audio", "enable_vbr", NULL);
-
-    gdouble volume = 1.0;
-    g_object_get(app->button_volume, "value", &volume, NULL);
-
-    app->session = rtp_session_new();
-    g_signal_connect_swapped(app->session, "hangup", (GCallback)call_stop, app);
-    rtp_session_prepare(app->session, socket, &enc_key, &dec_key);
-    if(echo_cancel) rtp_session_echo_cancel(app->session);
-
     rtp_session_set_bitrate(app->session, bitrate, enable_vbr);
-    rtp_session_set_volume(app->session, volume);
+
+    rtp_session_bind_volume(app->session, app->button_volume, "value");
     rtp_session_play(app->session);
 
     gtk_widget_set_sensitive(app->button_stop, TRUE);
@@ -156,20 +140,6 @@ static void lookup_finished(DhtClient *client, GAsyncResult *result, Application
 
 static void new_connection(Application *app, DhtId *id, GSocket *socket, DhtKey *enc_key, DhtKey *dec_key)
 {
-    gboolean echo_cancel = g_key_file_get_boolean(app->config, "audio", "echo-cancel", NULL);
-    guint bitrate = g_key_file_get_integer(app->config, "audio", "bitrate", NULL);
-    gboolean enable_vbr = g_key_file_get_boolean(app->config, "audio", "enable_vbr", NULL);
-
-    app->session = rtp_session_new();
-    g_signal_connect_swapped(app->session, "hangup", (GCallback)call_stop, app);
-    rtp_session_prepare(app->session, socket, enc_key, dec_key);
-    if(echo_cancel) rtp_session_echo_cancel(app->session);
-
-    rtp_session_set_bitrate(app->session, bitrate, enable_vbr);
-    rtp_session_set_volume(app->session, 0.0);
-    rtp_session_set_tone(app->session, TRUE);
-    rtp_session_play(app->session);
-
     const gchar *alias = g_hash_table_lookup(app->id2alias_table, id);
     if(alias) gtk_entry_set_text(GTK_ENTRY(app->main_entry), alias);
     else
@@ -177,6 +147,17 @@ static void new_connection(Application *app, DhtId *id, GSocket *socket, DhtKey 
         g_autofree gchar *tmp = dht_id_to_string(id);
         gtk_entry_set_text(GTK_ENTRY(app->main_entry), tmp);
     }
+
+    app->session = rtp_session_new(socket, enc_key, dec_key);
+    g_signal_connect_swapped(app->session, "hangup", (GCallback)call_stop, app);
+
+    guint bitrate = g_key_file_get_integer(app->config, "audio", "bitrate", NULL);
+    gboolean enable_vbr = g_key_file_get_boolean(app->config, "audio", "enable_vbr", NULL);
+    rtp_session_set_bitrate(app->session, bitrate, enable_vbr);
+
+    rtp_session_bind_volume(app->session, app->button_volume, "value");
+    rtp_session_set_tone(app->session, TRUE);
+    rtp_session_play(app->session);
 
     g_idle_add((GSourceFunc)dialog_run, app);
     gtk_widget_set_sensitive(app->button_start, FALSE);
@@ -267,25 +248,6 @@ static void editor_show(Application *app, GtkEntryIconPosition icon_pos, GdkEven
         return;
     }
 
-    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-
-    GtkWidget *textview = gtk_text_view_new_with_buffer(app->aliases_buffer);
-    PangoFontDescription *font = pango_font_description_from_string("monospace");
-    gtk_widget_override_font(textview, font);
-    pango_font_description_free(font);
-
-    GtkWidget *scrolledwindow = gtk_scrolled_window_new(NULL, NULL);
-    gtk_container_add(GTK_CONTAINER(scrolledwindow), textview);
-    gtk_box_pack_start(GTK_BOX(vbox), scrolledwindow, TRUE, TRUE, 0);
-
-    GtkWidget *button = gtk_button_new_with_label(_("Save changes"));
-    g_signal_connect_swapped(button, "clicked", (GCallback)editor_save, app);
-
-    GtkWidget *hbox = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL);
-    g_object_set(hbox, "layout-style", GTK_BUTTONBOX_END, "margin", 5, NULL);
-    gtk_container_add(GTK_CONTAINER(hbox), button);
-    gtk_box_pack_end(GTK_BOX(vbox), hbox, FALSE, TRUE, 0);
-
     app->editor_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     g_signal_connect(app->editor_window, "delete-event", (GCallback)gtk_widget_hide_on_delete, NULL);
     g_object_set(app->editor_window, "icon-name", "accessories-text-editor", "title", _("Nanotalk aliases"), NULL);
@@ -293,20 +255,29 @@ static void editor_show(Application *app, GtkEntryIconPosition icon_pos, GdkEven
     gtk_window_set_destroy_with_parent(GTK_WINDOW(app->editor_window), TRUE);
     gtk_window_set_type_hint(GTK_WINDOW(app->editor_window), GDK_WINDOW_TYPE_HINT_DIALOG);
     gtk_window_set_default_size(GTK_WINDOW(app->editor_window), 500, 300);
+
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_container_add(GTK_CONTAINER(app->editor_window), vbox);
+
+    GtkWidget *scrolledwindow = gtk_scrolled_window_new(NULL, NULL);
+    gtk_box_pack_start(GTK_BOX(vbox), scrolledwindow, TRUE, TRUE, 0);
+
+    GtkWidget *textview = gtk_text_view_new_with_buffer(app->aliases_buffer);
+    gtk_container_add(GTK_CONTAINER(scrolledwindow), textview);
+
+    PangoFontDescription *font = pango_font_description_from_string("monospace");
+    gtk_widget_override_font(textview, font);
+    pango_font_description_free(font);
+
+    GtkWidget *hbox = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL);
+    g_object_set(hbox, "layout-style", GTK_BUTTONBOX_END, "margin", 5, NULL);
+    gtk_box_pack_end(GTK_BOX(vbox), hbox, FALSE, TRUE, 0);
+
+    GtkWidget *button = gtk_button_new_with_label(_("Save changes"));
+    g_signal_connect_swapped(button, "clicked", (GCallback)editor_save, app);
+    gtk_container_add(GTK_CONTAINER(hbox), button);
+
     gtk_widget_show_all(app->editor_window);
-}
-
-static void notify_peers(Application *app)
-{
-    if(app->label_peers)
-    {
-        guint peers = 0;
-        g_object_get(app->client, "peers", &peers, NULL);
-
-        g_autofree gchar *str = g_strdup_printf("%u", peers);
-        gtk_label_set_text(GTK_LABEL(app->label_peers), str);
-    }
 }
 
 static void config_apply(Application *app)
@@ -332,14 +303,18 @@ static void config_apply(Application *app)
         {
             g_object_set(client, "listen", listen, NULL);
             g_signal_connect_swapped(client, "new-connection", (GCallback)new_connection, app);
-            g_signal_connect_swapped(client, "notify::peers", (GCallback)notify_peers, app);
+            if(app->binding_peers)
+            {
+                GObject *target = g_binding_get_target(app->binding_peers);
+                g_object_unref(app->binding_peers);
+
+                app->binding_peers = g_object_bind_property(client, "peers", target, "label", G_BINDING_SYNC_CREATE);
+            }
 
             g_object_unref(app->client);
             app->client = client;
 
-            notify_peers(app);
             need_bootstrap = TRUE;
-
             g_key_file_set_integer(app->config, "network", "local-port", local_port);
         }
     }
@@ -368,10 +343,8 @@ static void config_apply(Application *app)
         g_key_file_set_integer(app->config, "network", "bootstrap-port", bootstrap_port);
     }
 
-    gboolean echo_cancel = gtk_switch_get_active(GTK_SWITCH(app->switch_echo));
     guint bitrate = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(app->spin_bitrate));
     gboolean enable_vbr = gtk_switch_get_active(GTK_SWITCH(app->switch_vbr));
-    g_key_file_set_boolean(app->config, "audio", "echo-cancel", echo_cancel);
     g_key_file_set_integer(app->config, "audio", "bitrate", bitrate);
     g_key_file_set_boolean(app->config, "audio", "enable-vbr", enable_vbr);
     if(app->session) rtp_session_set_bitrate(app->session, bitrate, enable_vbr);
@@ -398,23 +371,20 @@ static void config_show(Application *app)
     gtk_window_set_destroy_with_parent(GTK_WINDOW(app->config_window), TRUE);
     gtk_window_set_type_hint(GTK_WINDOW(app->config_window), GDK_WINDOW_TYPE_HINT_DIALOG);
 
-    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 15);
     gtk_container_add(GTK_CONTAINER(app->config_window), vbox);
 
-    GtkWidget *notebook = gtk_notebook_new();
-    gtk_container_add(GTK_CONTAINER(vbox), notebook);
-
-    // Network page
+    GtkWidget *label, *seperator;
     GtkWidget *grid = gtk_grid_new();
-    g_object_set(grid, "row-homogeneous", TRUE, "column-spacing", 10, "row-spacing", 5, "margin", 10, NULL);
-    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), grid, gtk_label_new(_("Network")));
+    g_object_set(grid, "row-homogeneous", TRUE, "column-spacing", 15, "row-spacing", 5, "margin", 10, NULL);
+    gtk_container_add(GTK_CONTAINER(vbox), grid);
 
     g_autoptr(DhtId) id = NULL;
     g_object_get(app->client, "id", &id, NULL);
     g_autofree gchar *id_string = dht_id_to_string(id);
     g_autofree gchar *id_markup = g_strconcat("<b>", id_string, "</b>", NULL);
 
-    GtkWidget *label = gtk_label_new(_("Client ID"));
+    label = gtk_label_new(_("Client ID"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 0, 1, 1);
     label = gtk_label_new(NULL);
@@ -424,12 +394,19 @@ static void config_show(Application *app)
     gtk_widget_set_hexpand(label, TRUE);
     gtk_grid_attach(GTK_GRID(grid), label, 1, 0, 1, 1);
 
-    label = gtk_label_new(_("Peers"));
+    PangoFontDescription *font = pango_font_description_from_string("monospace");
+    gtk_widget_override_font(label, font);
+    pango_font_description_free(font);
+
+    label = gtk_label_new(_("Number of peers"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 1, 1, 1);
-    app->label_peers = gtk_label_new(NULL);
-    gtk_grid_attach(GTK_GRID(grid), app->label_peers, 1, 1, 1, 1);
-    notify_peers(app);
+    label = gtk_label_new(NULL);
+    app->binding_peers = g_object_bind_property(app->client, "peers", label, "label", G_BINDING_SYNC_CREATE);
+    gtk_grid_attach(GTK_GRID(grid), label, 1, 1, 1, 1);
+
+    seperator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_grid_attach(GTK_GRID(grid), seperator, 0, 2, 2, 1);
 
     guint16 local_port = g_key_file_get_integer(app->config, "network", "local-port", NULL);
     g_autofree gchar *bootstrap_host = g_key_file_get_string(app->config, "network", "bootstrap-host", NULL);
@@ -437,81 +414,64 @@ static void config_show(Application *app)
 
     label = gtk_label_new(_("Local port"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 3, 1, 1);
     app->spin_local_port = gtk_spin_button_new_with_range(0, G_MAXUINT16, 1);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_local_port), local_port);
-    gtk_grid_attach(GTK_GRID(grid), app->spin_local_port, 1, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), app->spin_local_port, 1, 3, 1, 1);
     gtk_widget_set_tooltip_text(app->spin_local_port,
     		_("Local port to which the client is bound, this port needs to be forwarded on your router"));
 
     label = gtk_label_new(_("Bootstrap host"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 4, 1, 1);
     app->entry_bootstrap_host = gtk_entry_new();
     gtk_entry_set_width_chars(GTK_ENTRY(app->entry_bootstrap_host), 30);
     gtk_entry_set_text(GTK_ENTRY(app->entry_bootstrap_host), bootstrap_host ?: "");
-    gtk_grid_attach(GTK_GRID(grid), app->entry_bootstrap_host, 1, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), app->entry_bootstrap_host, 1, 4, 1, 1);
     gtk_widget_set_tooltip_text(app->entry_bootstrap_host,
     		_("Hostname or IP address used to join the network"));
 
     label = gtk_label_new(_("Bootstrap port"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 4, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 5, 1, 1);
     app->spin_bootstrap_port = gtk_spin_button_new_with_range(0, G_MAXUINT16, 1);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_bootstrap_port), bootstrap_port);
-    gtk_grid_attach(GTK_GRID(grid), app->spin_bootstrap_port, 1, 4, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), app->spin_bootstrap_port, 1, 5, 1, 1);
     gtk_widget_set_tooltip_text(app->spin_bootstrap_port,
-    		_("Port number used by the boostrap host"));
+    		_("Port number of the boostrap host"));
 
-    // Audio page
-    grid = gtk_grid_new();
-    g_object_set(grid, "column-spacing", 10, "row-spacing", 5, "margin", 10, NULL);
-    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), grid, gtk_label_new(_("Audio")));
+    seperator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_grid_attach(GTK_GRID(grid), seperator, 0, 6, 2, 1);
 
-    gboolean echo_cancel = g_key_file_get_boolean(app->config, "audio", "echo-cancel", NULL);
     gboolean enable_vbr = g_key_file_get_boolean(app->config, "audio", "enable-vbr", NULL);
     guint bitrate = g_key_file_get_integer(app->config, "audio", "bitrate", NULL);
 
-    label = gtk_label_new(_("Echo cancellation"));
+    label = gtk_label_new(_("Audio bitrate"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 0, 1, 1);
-    app->switch_echo = gtk_switch_new();
-    gtk_switch_set_active(GTK_SWITCH(app->switch_echo), echo_cancel);
-    gtk_widget_set_hexpand(app->switch_echo, TRUE);
-    gtk_widget_set_halign(app->switch_echo, GTK_ALIGN_END);
-    gtk_grid_attach(GTK_GRID(grid), app->switch_echo, 1, 0, 2, 1);
-    gtk_widget_set_tooltip_text(app->switch_echo,
-    		_("Enables acustic echo cancellation"));
-
-#ifdef G_OS_WIN32
-    gtk_widget_set_sensitive(app->switch_echo, FALSE);
-#endif
-
-    label = gtk_label_new(_("Bitrate"));
-    gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 7, 1, 1);
     app->spin_bitrate = gtk_spin_button_new_with_range(4000, 650000, 1000);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_bitrate), bitrate);
-    gtk_grid_attach(GTK_GRID(grid), app->spin_bitrate, 1, 1, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), app->spin_bitrate, 1, 7, 1, 1);
     gtk_widget_set_tooltip_text(app->spin_bitrate,
     		_("Target bitrate of the audio encoder"));
 
     label = gtk_label_new(_("Enable VBR"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 8, 1, 1);
     app->switch_vbr = gtk_switch_new();
     gtk_switch_set_active(GTK_SWITCH(app->switch_vbr), enable_vbr);
     gtk_widget_set_hexpand(app->switch_vbr, TRUE);
     gtk_widget_set_halign(app->switch_vbr, GTK_ALIGN_END);
-    gtk_grid_attach(GTK_GRID(grid), app->switch_vbr, 1, 2, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), app->switch_vbr, 1, 8, 1, 1);
     gtk_widget_set_tooltip_text(app->switch_vbr,
     		_("Enables variable bitrate encoding"));
 
-    // Button box
+    GtkWidget *button;
     GtkWidget *hbox = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL);
     g_object_set(hbox, "layout-style", GTK_BUTTONBOX_END, "spacing", 5, "margin", 5, NULL);
     gtk_container_add(GTK_CONTAINER(vbox), hbox);
-    GtkWidget *button = gtk_button_new_with_label(_("Apply"));
+
+    button = gtk_button_new_with_label(_("Apply"));
     g_signal_connect_swapped(button, "clicked", (GCallback)config_apply, app);
     gtk_container_add(GTK_CONTAINER(hbox), button);
 
@@ -538,6 +498,32 @@ static void about_show(Application *app)
 
 static void menu_popup(Application *app, guint button, guint activate_time)
 {
+    if(!app->status_menu)
+    {
+        GtkWidget *menu_item, *image;
+        app->status_menu = gtk_menu_new();
+
+        image = gtk_image_new_from_icon_name("preferences-desktop", GTK_ICON_SIZE_MENU);
+        menu_item = gtk_image_menu_item_new_with_label(_("Preferences"));
+        g_signal_connect_swapped(menu_item, "activate", (GCallback)config_show, app);
+        gtk_image_menu_item_set_image(GTK_IMAGE_MENU_ITEM(menu_item), image);
+        gtk_menu_shell_append(GTK_MENU_SHELL(app->status_menu), menu_item);
+
+        image = gtk_image_new_from_icon_name("help-about", GTK_ICON_SIZE_MENU);
+        menu_item = gtk_image_menu_item_new_with_label(_("About"));
+        g_signal_connect_swapped(menu_item, "activate", (GCallback)about_show, app);
+        gtk_image_menu_item_set_image(GTK_IMAGE_MENU_ITEM(menu_item), image);
+        gtk_menu_shell_append(GTK_MENU_SHELL(app->status_menu), menu_item);
+
+        image = gtk_image_new_from_icon_name("application-exit", GTK_ICON_SIZE_MENU);
+        menu_item = gtk_image_menu_item_new_with_label(_("Quit"));
+        g_signal_connect(menu_item, "activate", (GCallback)gtk_main_quit, NULL);
+        gtk_image_menu_item_set_image(GTK_IMAGE_MENU_ITEM(menu_item), image);
+        gtk_menu_shell_append(GTK_MENU_SHELL(app->status_menu), menu_item);
+
+        gtk_widget_show_all(app->status_menu);
+    }
+
     gtk_menu_popup(GTK_MENU(app->status_menu), NULL, NULL, gtk_status_icon_position_menu, app->status_icon, button, activate_time);
 }
 
@@ -576,7 +562,6 @@ static void application_startup(Application *app)
     gtk_widget_set_hexpand(app->button_start, TRUE);
 
     app->button_volume = gtk_volume_button_new();
-    g_signal_connect_swapped(app->button_volume, "value-changed", (GCallback)volume_changed, app);
     gtk_scale_button_set_value(GTK_SCALE_BUTTON(app->button_volume), 1.0);
     gtk_widget_set_can_focus(app->button_volume, FALSE);
 
@@ -608,33 +593,10 @@ static void application_startup(Application *app)
     gtk_container_add(GTK_CONTAINER(app->main_window), grid);
     gtk_widget_show_all(GTK_WIDGET(app->main_window));
 
-    // Status icon
-    GtkWidget *menu_item, *image;
-    app->status_menu = gtk_menu_new();
-
-    image = gtk_image_new_from_icon_name("preferences-desktop", GTK_ICON_SIZE_MENU);
-    menu_item = gtk_image_menu_item_new_with_label(_("Preferences"));
-    g_signal_connect_swapped(menu_item, "activate", (GCallback)config_show, app);
-    gtk_image_menu_item_set_image(GTK_IMAGE_MENU_ITEM(menu_item), image);
-    gtk_menu_shell_append(GTK_MENU_SHELL(app->status_menu), menu_item);
-
-    image = gtk_image_new_from_icon_name("help-about", GTK_ICON_SIZE_MENU);
-    menu_item = gtk_image_menu_item_new_with_label(_("About"));
-    g_signal_connect_swapped(menu_item, "activate", (GCallback)about_show, app);
-    gtk_image_menu_item_set_image(GTK_IMAGE_MENU_ITEM(menu_item), image);
-    gtk_menu_shell_append(GTK_MENU_SHELL(app->status_menu), menu_item);
-
-    image = gtk_image_new_from_icon_name("application-exit", GTK_ICON_SIZE_MENU);
-    menu_item = gtk_image_menu_item_new_with_label(_("Quit"));
-    g_signal_connect(menu_item, "activate", (GCallback)gtk_main_quit, NULL);
-    gtk_image_menu_item_set_image(GTK_IMAGE_MENU_ITEM(menu_item), image);
-    gtk_menu_shell_append(GTK_MENU_SHELL(app->status_menu), menu_item);
-
     app->status_icon = gtk_status_icon_new_from_icon_name("call-start-symbolic");
     g_signal_connect_swapped(app->status_icon, "popup-menu", (GCallback)menu_popup, app);
     g_signal_connect_swapped(app->status_icon, "activate", (GCallback)window_toggle, app);
     g_object_set(app->status_icon, "tooltip-text", "Nanotalk", "title", "Nanotalk", NULL);
-    gtk_widget_show_all(app->status_menu);
 }
 
 void application_init(gint argc, gchar *argv[])
@@ -647,15 +609,32 @@ void application_run(DhtClient *client, GKeyFile *config)
 {
     if(!g_key_file_has_group(config, "audio"))
     {
-        g_key_file_set_boolean(config, "audio", "echo-cancel", DEFAULT_ECHO_CANCEL);
         g_key_file_set_integer(config, "audio", "bitrate", DEFAULT_BITRATE);
         g_key_file_set_boolean(config, "audio", "enable-vbr", DEFAULT_ENABLE_VBR);
     }
 
-    Application app = { };
-    app.config = config;
-    app.client = client;
+    Application *app = &(Application){0};
+    app->config = config;
+    app->client = client;
 
-    application_startup(&app);
+    application_startup(app);
     gtk_main();
+
+    // Cleanup
+    if(app->session) rtp_session_destroy(app->session);
+    if(app->config_window) gtk_widget_destroy(app->config_window);
+    if(app->editor_window) gtk_widget_destroy(app->editor_window);
+    if(app->status_menu) gtk_widget_destroy(app->status_menu);
+    if(app->binding_peers) g_object_unref(app->binding_peers);
+
+    gtk_widget_destroy(app->main_window);
+    g_object_unref(app->status_icon);
+
+    g_object_unref(app->aliases_buffer);
+    g_object_unref(app->aliases_list);
+    g_hash_table_destroy(app->alias2id_table);
+    g_hash_table_destroy(app->id2alias_table);
+
+    g_key_file_unref(config);
+    g_object_unref(client);
 }

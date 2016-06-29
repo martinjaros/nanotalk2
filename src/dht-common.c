@@ -108,6 +108,15 @@ GSocketAddress* dht_address_deserialize(const DhtAddress *addr)
     return g_inet_socket_address_new(inaddr, port);
 }
 
+const gchar* dht_address_print(const DhtAddress *addr)
+{
+    guint16 port = ((guint16)addr->data[0] << 8) | (guint16)addr->data[1];
+
+    static gchar buffer[22];
+    sprintf(buffer, "%u.%u.%u.%u:%u", addr->data[2], addr->data[3], addr->data[4], addr->data[5], port);
+    return buffer;
+}
+
 gpointer dht_key_copy(gpointer key)
 {
     return g_slice_dup(DhtKey, key);

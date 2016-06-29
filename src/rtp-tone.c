@@ -16,8 +16,6 @@
 
 #include "rtp-tone.h"
 
-#define PI 3.14159265358979323846
-
 #define DEFAULT_ENABLE          FALSE
 #define DEFAULT_TONE_AMPLITUDE  0.5
 #define DEFAULT_TONE_FREQUENCY  425
@@ -181,14 +179,14 @@ static GstFlowReturn rtp_tone_transform_ip(GstBaseTransform *transform, GstBuffe
             if(tone->time < tone->tone_duration)
             {
                 const gfloat A = 0.5;
-                const gfloat B = 2.0 * PI - 5.0;
-                const gfloat C = PI - 3.0;
+                const gfloat B = 2.0 * G_PI - 5.0;
+                const gfloat C = G_PI - 3.0;
 
                 if(tone->phase < 1.0)
                 {
                     gfloat z = tone->phase;
                     gfloat z2 = z * z;
-                    gfloat y = A * z * (PI - z2 * (B - C * z2));
+                    gfloat y = A * z * (G_PI - z2 * (B - C * z2));
 
                     value = G_MAXINT16 * tone->tone_amplitude * y;
                 }
@@ -196,7 +194,7 @@ static GstFlowReturn rtp_tone_transform_ip(GstBaseTransform *transform, GstBuffe
                 {
                     gfloat z = tone->phase - 2.0;
                     gfloat z2 = z * z;
-                    gfloat y = -A * z * (PI - z2 * (B - C * z2));
+                    gfloat y = -A * z * (G_PI - z2 * (B - C * z2));
 
                     value = G_MAXINT16 * tone->tone_amplitude * y;
                 }

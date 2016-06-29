@@ -20,14 +20,6 @@
 #include "rtp-tone.h"
 #include "rtp-session.h"
 
-#ifdef G_OS_WIN32
-#define AUDIO_SOURCE    "directsoundsrc"
-#define AUDIO_SINK      "directsoundsink"
-#else
-#define AUDIO_SOURCE    "pulsesrc"
-#define AUDIO_SINK      "pulsesink"
-#endif
-
 enum
 {
     SIGNAL_HANGUP,
@@ -38,6 +30,7 @@ typedef struct _RtpSessionPrivate RtpSessionPrivate;
 
 struct _RtpSessionPrivate
 {
+    GBinding *volume_binding;
     GstElement *rx_pipeline, *tx_pipeline;
     guint rx_watch, tx_watch;
 };
@@ -84,14 +77,9 @@ static void rtp_session_init(RtpSession *session)
     gst_object_unref(tx_bus);
 }
 
-RtpSession* rtp_session_new()
+RtpSession* rtp_session_new(GSocket *socket, DhtKey *enc_key, DhtKey *dec_key)
 {
-    return g_object_new(RTP_TYPE_SESSION, NULL, NULL);
-}
-
-void rtp_session_prepare(RtpSession *session, GSocket *socket, DhtKey *enc_key, DhtKey *dec_key)
-{
-    g_return_if_fail(RTP_IS_SESSION(session));
+    RtpSession *session = g_object_new(RTP_TYPE_SESSION, NULL);
     RtpSessionPrivate *priv = rtp_session_get_instance_private(session);
 
     // Receiving pipeline
@@ -100,9 +88,10 @@ void rtp_session_prepare(RtpSession *session, GSocket *socket, DhtKey *enc_key, 
     GstElement *audio_buffer = assert_element("rtpjitterbuffer", "audio_buffer");
     GstElement *audio_depay = assert_element("rtpopusdepay", "audio_depay");
     GstElement *audio_dec = assert_element("opusdec", "audio_dec");
-    GstElement *audio_sink = assert_element(AUDIO_SINK, "audio_sink");
-    gst_bin_add_many(GST_BIN(priv->rx_pipeline), rtp_src, rtp_demux, audio_buffer, audio_depay, audio_dec, audio_sink, NULL);
-    gst_element_link_many(audio_buffer, audio_depay, audio_dec, audio_sink, NULL);
+    GstElement *audio_volume = assert_element("volume", "audio_volume");
+    GstElement *audio_sink = assert_element("autoaudiosink", "audio_sink");
+    gst_bin_add_many(GST_BIN(priv->rx_pipeline), rtp_src, rtp_demux, audio_buffer, audio_depay, audio_dec, audio_volume, audio_sink, NULL);
+    gst_element_link_many(audio_buffer, audio_depay, audio_dec, audio_volume, audio_sink, NULL);
     gst_element_link(rtp_src, rtp_demux);
 
     g_signal_connect(rtp_demux, "request-pt-map", (GCallback)request_pt_map_cb, session);
@@ -113,31 +102,30 @@ void rtp_session_prepare(RtpSession *session, GSocket *socket, DhtKey *enc_key, 
 #endif
 
     // Transmitting pipeline
-    GstElement *audio_src = assert_element(AUDIO_SOURCE, "audio_src");
+    GstElement *audio_src = assert_element("autoaudiosrc", "audio_src");
     GstElement *audio_tone = rtp_tone_new("audio_tone");
     GstElement *audio_enc = assert_element("opusenc", "audio_enc");
     GstElement *audio_pay = assert_element("rtpopuspay", "audio_pay");
     GstElement *audio_sink_rtp = rtp_sink_new(enc_key, socket, "audio_sink");
     gst_bin_add_many(GST_BIN(priv->tx_pipeline), audio_src, audio_tone, audio_enc, audio_pay, audio_sink_rtp, NULL);
     gst_element_link_many(audio_src, audio_tone, audio_enc, audio_pay, audio_sink_rtp, NULL);
+
+    return session;
 }
 
-void rtp_session_echo_cancel(RtpSession *session)
+void rtp_session_bind_volume(RtpSession *session, gpointer source, const gchar *property)
 {
     g_return_if_fail(RTP_IS_SESSION(session));
-    RtpSessionPrivate* priv = rtp_session_get_instance_private(session);
+    RtpSessionPrivate *priv = rtp_session_get_instance_private(session);
 
-    GstElement *audio_src = gst_bin_get_by_name(GST_BIN(priv->tx_pipeline), "audio_src");
-    GstElement *audio_sink = gst_bin_get_by_name(GST_BIN(priv->rx_pipeline), "audio_sink");
-    if(audio_src && audio_sink)
+    GstElement *audio_volume = gst_bin_get_by_name(GST_BIN(priv->rx_pipeline), "audio_volume");
+    if(audio_volume)
     {
-        GstStructure *props = gst_structure_new("props", "filter.want", G_TYPE_STRING, "echo-cancel", NULL);
-        g_object_set(audio_src, "stream-properties", props, NULL);
-        g_object_set(audio_sink, "stream-properties", props, NULL);
-        gst_structure_free(props);
+        if(priv->volume_binding)
+            g_binding_unbind(priv->volume_binding);
 
-        gst_object_unref(audio_src);
-        gst_object_unref(audio_sink);
+        priv->volume_binding = g_object_bind_property(source, property, audio_volume, "volume", G_BINDING_SYNC_CREATE);
+        gst_object_unref(audio_volume);
     }
 }
 
@@ -155,19 +143,6 @@ void rtp_session_set_bitrate(RtpSession *session, guint bitrate, gboolean vbr)
     }
 }
 
-void rtp_session_set_volume(RtpSession *session, gdouble value)
-{
-    g_return_if_fail(RTP_IS_SESSION(session));
-    RtpSessionPrivate *priv = rtp_session_get_instance_private(session);
-
-    GstElement *audio_sink = gst_bin_get_by_name(GST_BIN(priv->rx_pipeline), "audio_sink");
-    if(audio_sink)
-    {
-        g_object_set(audio_sink, "volume", value, NULL);
-        gst_object_unref(audio_sink);
-    }
-}
-
 void rtp_session_set_tone(RtpSession *session, gboolean enable)
 {
     g_return_if_fail(RTP_IS_SESSION(session));
@@ -178,6 +153,13 @@ void rtp_session_set_tone(RtpSession *session, gboolean enable)
     {
         g_object_set(audio_tone, "enable", enable, NULL);
         gst_object_unref(audio_tone);
+    }
+
+    GstElement *audio_volume = gst_bin_get_by_name(GST_BIN(priv->rx_pipeline), "audio_volume");
+    if(audio_volume)
+    {
+        g_object_set(audio_volume, "mute", enable, NULL);
+        gst_object_unref(audio_volume);
     }
 }
 
@@ -209,6 +191,9 @@ static void rtp_session_finalize(GObject *obj)
     RtpSession *session = RTP_SESSION(obj);
     RtpSessionPrivate *priv = rtp_session_get_instance_private(session);
 
+    if(priv->volume_binding)
+        g_binding_unbind(priv->volume_binding);
+
     gst_object_unref(priv->rx_pipeline);
     g_source_remove(priv->rx_watch);
 
@@ -226,11 +211,7 @@ static GstCaps* request_pt_map_cb(GstElement *element, guint pt, gpointer arg)
             return gst_caps_new_simple("application/x-rtp",
                     "media", G_TYPE_STRING, "audio",
                     "clock-rate", G_TYPE_INT, 48000,
-#if GST_CHECK_VERSION(1, 2, 8)
-                    "encoding-name", G_TYPE_STRING, "OPUS",
-#else
                     "encoding-name", G_TYPE_STRING, "X-GST-OPUS-DRAFT-SPITTKA-00",
-#endif
                     NULL);
 
         default:

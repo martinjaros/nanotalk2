@@ -414,7 +414,7 @@ static void dht_client_finalize(GObject *obj)
 static void dht_client_update(DhtClient *client, const DhtId *id, const DhtAddress *addr, gboolean is_alive)
 {
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
-    g_debug("Update node %08x (%s)", dht_id_hash(id), is_alive ? "alive" : "timed-out");
+    g_debug("Update node %08x %s (%s)", dht_id_hash(id), dht_address_print(addr), is_alive ? "alive" : "timed-out");
 
     DhtId metric;
     dht_id_xor(&metric, &priv->id, id);
@@ -546,7 +546,7 @@ static guint dht_client_search(DhtClient *client, const DhtId *id, MsgNode *node
                 }
                 else
                 {
-                    g_debug("Delete node %08x", dht_id_hash(&node->id));
+                    g_debug("Delete node %08x %s", dht_id_hash(&node->id), dht_address_print(&node->addr));
 
                     // Delete dead node
                     g_slice_free(DhtNode, node);
@@ -654,7 +654,7 @@ static void dht_lookup_dispatch(DhtLookup *lookup)
 {
     DhtClient *client = lookup->client;
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
-    g_debug("Dispatching lookup %08x", dht_id_hash(&lookup->id));
+    g_debug("Dispatch lookup %08x", dht_id_hash(&lookup->id));
 
     guint num_alive = 0;
     GSequenceIter *iter = g_sequence_get_begin_iter(lookup->query_sequence);
@@ -878,7 +878,7 @@ static gboolean dht_client_receive_cb(GSocket *socket, GIOCondition condition, g
 
                 DhtId id;
                 dht_id_from_pubkey(&id, &msg->pubkey);
-                g_debug("Connection response %08x", dht_id_hash(&id));
+                g_debug("Connection response 1 %08x", dht_id_hash(&id));
 
                 // Find connection
                 DhtConnection *connection = g_hash_table_lookup(priv->connection_table, &msg->peer_nonce);
@@ -924,7 +924,7 @@ static gboolean dht_client_receive_cb(GSocket *socket, GIOCondition condition, g
                 // Find connection
                 DhtConnection *connection = g_hash_table_lookup(priv->connection_table, &msg->peer_nonce);
                 if(!connection || !connection->is_remote || !dht_key_equal(&connection->auth_tag, &msg->auth_tag)) break;
-                g_debug("Connection response %08x", dht_id_hash(&connection->id));
+                g_debug("Connection response 2 %08x", dht_id_hash(&connection->id));
 
                 g_hash_table_steal(priv->connection_table, &connection->nonce);
                 if(priv->listen)

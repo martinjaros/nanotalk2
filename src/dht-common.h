@@ -59,6 +59,7 @@ void dht_id_xor(DhtId *res, const DhtId *a, const DhtId *b);
 
 void dht_address_serialize(DhtAddress *addr, GSocketAddress *sockaddr);
 GSocketAddress* dht_address_deserialize(const DhtAddress *addr);
+const gchar* dht_address_print(const DhtAddress *addr);
 
 gpointer dht_key_copy(gpointer key);
 gpointer dht_id_copy(gpointer id);
