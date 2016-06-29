@@ -33,14 +33,14 @@ void rtp_session_prepare(RtpSession *session, GSocket *socket, DhtKey *enc_key, 
 
 void rtp_session_echo_cancel(RtpSession *session);
 
-void rtp_session_set_tone(RtpSession* session, gboolean enable);
+void rtp_session_set_bitrate(RtpSession *session, guint bitrate, gboolean vbr);
 
 void rtp_session_set_volume(RtpSession *session, gdouble volume);
 
-void rtp_session_set_bitrate(RtpSession *session, guint bitrate, gboolean vbr);
+void rtp_session_set_tone(RtpSession *session, gboolean enable);
 
-void rtp_session_start(RtpSession *session);
+void rtp_session_play(RtpSession *session);
 
-void rtp_session_stop(RtpSession *session);
+void rtp_session_destroy(RtpSession *session);
 
 #endif /* __RTP_SESSION_H__ */

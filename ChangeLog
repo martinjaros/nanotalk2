@@ -1,3 +1,7 @@
+2016-06-29 Martin Jaros <xjaros32@stud.feec.vutbr.cz>
+    * updated DHT protocol
+    * RTP session manager
+
 2016-05-05 Martin Jaros <xjaros32@stud.feec.vutbr.cz>
     * tooltips for controls
     * sound preferences, echo cancellation

@@ -163,7 +163,6 @@ gboolean dht_address_equal(gconstpointer a, gconstpointer b)
 
 gint dht_id_compare(gconstpointer a, gconstpointer b, gpointer arg)
 {
-    (void)arg;
     return memcmp(a, b, DHT_ID_SIZE);
 }
 

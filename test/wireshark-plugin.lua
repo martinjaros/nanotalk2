@@ -36,25 +36,34 @@ nanotalk_proto.dissector = function(buffer, info, tree)
                 end
             end
         elseif msgtype == 0xC2 then
-            if buffer:len() == 53 then
+            if buffer:len() == 65 then
                 info.cols.protocol = "NANOTALK"
                 info.cols.info = "Connection request"
 
                 local subtree = tree:add(nanotalk_proto, buffer())
                 subtree:add(buffer(0, 1), "Type: Connection request (0xC2)")
-                subtree:add(buffer(1, 20), "Source ID: " .. tostring(buffer(1, 20)))
-                subtree:add(buffer(21, 32), "Nonce: " .. tostring(buffer(21, 32)))
+                subtree:add(buffer(1, 32), "Public key: " .. tostring(buffer(1, 32)))
+                subtree:add(buffer(33, 32), "Nonce: " .. tostring(buffer(33, 32)))
             end
         elseif msgtype == 0xC3 then
-            if buffer:len() == 97 then
+            if buffer:len() == 129 then
                 info.cols.protocol = "NANOTALK"
-                info.cols.info = "Connection response"
+                info.cols.info = "Connection response 1"
 
                 local subtree = tree:add(nanotalk_proto, buffer())
                 subtree:add(buffer(0, 1), "Type: Connection response (0xC3)")
                 subtree:add(buffer(1, 32), "Public key: " .. tostring(buffer(1, 32)))
-                subtree:add(buffer(33, 32), "Source nonce: " .. tostring(buffer(33, 32)))
+                subtree:add(buffer(33, 32), "Nonce: " .. tostring(buffer(33, 32)))
                 subtree:add(buffer(65, 32), "Peer nonce: " .. tostring(buffer(65, 32)))
+                subtree:add(buffer(97, 32), "Authentication tag: " .. tostring(buffer(97, 32)))
+            elseif buffer:len() == 65 then
+                info.cols.protocol = "NANOTALK"
+                info.cols.info = "Connection response 2"
+
+                local subtree = tree:add(nanotalk_proto, buffer())
+                subtree:add(buffer(0, 1), "Type: Connection response (0xC3)")
+                subtree:add(buffer(1, 32), "Peer nonce: " .. tostring(buffer(1, 32)))
+                subtree:add(buffer(33, 32), "Authentication tag: " .. tostring(buffer(33, 32)))
             end
         end
     end

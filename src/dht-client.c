@@ -958,7 +958,7 @@ static gboolean dht_query_timeout_cb(gpointer arg)
     dht_id_xor(&id, &query->metric, &lookup->id);
 
     // Update node
-    dht_client_update(client, &id, NULL, FALSE);
+    dht_client_update(client, &id, &query->addr, FALSE);
     query->is_finished = TRUE;
 
     // Update source counter
