@@ -258,6 +258,8 @@ static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **buf)
             gst_buffer_unmap(buffer, &map);
             gst_buffer_unref(buffer);
         }
+
+        if(len < 0) break;
     }
 
     return GST_FLOW_ERROR;

@@ -33,10 +33,9 @@ typedef struct _Application Application;
 struct _Application
 {
     GtkWidget *main_window, *main_entry, *button_start, *button_volume, *button_stop, *call_dialog;
-    GtkWidget *config_window, *spin_local_port, *entry_bootstrap_host, *spin_bootstrap_port, *spin_bitrate, *switch_vbr;
+    GtkWidget *config_window, *label_peers, *spin_local_port, *entry_bootstrap_host, *spin_bootstrap_port, *spin_bitrate, *switch_vbr;
     GtkWidget *editor_window, *status_menu;
     GtkStatusIcon *status_icon;
-    GBinding *binding_peers;
 
     GtkTextBuffer *aliases_buffer;
     GtkListStore *aliases_list;
@@ -49,7 +48,38 @@ struct _Application
     RtpSession *session;
 };
 
-static void lookup_finished_cb(DhtClient *client, GAsyncResult *result, Application *app);
+static void call_stop(Application *app);
+
+static void lookup_finished_cb(DhtClient *client, GAsyncResult *result, Application *app)
+{
+    GError *error = NULL;
+    DhtKey enc_key, dec_key;
+    g_autoptr(GSocket) socket = NULL;
+    if(dht_client_lookup_finish(client, result, &socket, &enc_key, &dec_key, &error))
+    {
+        app->session = rtp_session_new(socket, &enc_key, &dec_key);
+        g_signal_connect_swapped(app->session, "hangup", (GCallback)call_stop, app);
+
+        guint bitrate = g_key_file_get_integer(app->config, "audio", "bitrate", NULL);
+        gboolean enable_vbr = g_key_file_get_boolean(app->config, "audio", "enable_vbr", NULL);
+        rtp_session_set_bitrate(app->session, bitrate, enable_vbr);
+
+        rtp_session_bind_volume(app->session, app->button_volume, "value");
+        rtp_session_play(app->session);
+
+        gtk_widget_set_sensitive(app->button_stop, TRUE);
+    }
+
+    if(error)
+    {
+        g_message("%s", error->message);
+        g_clear_error(&error);
+
+        gtk_widget_set_sensitive(app->button_start, TRUE);
+        g_object_set(app->client, "listen", TRUE, NULL);
+        return;
+    }
+}
 
 static void call_start(Application *app)
 {
@@ -112,32 +142,6 @@ static gboolean dialog_run(Application *app)
     return G_SOURCE_REMOVE;
 }
 
-static void lookup_finished_cb(DhtClient *client, GAsyncResult *result, Application *app)
-{
-    DhtKey enc_key, dec_key;
-    g_autoptr(GSocket) socket = NULL;
-    g_autoptr(GError) error = NULL;
-    if(!dht_client_lookup_finish(client, result, &socket, &enc_key, &dec_key, &error))
-    {
-        g_message("%s", error->message);
-        gtk_widget_set_sensitive(app->button_start, TRUE);
-        g_object_set(app->client, "listen", TRUE, NULL);
-        return;
-    }
-
-    app->session = rtp_session_new(socket, &enc_key, &dec_key);
-    g_signal_connect_swapped(app->session, "hangup", (GCallback)call_stop, app);
-
-    guint bitrate = g_key_file_get_integer(app->config, "audio", "bitrate", NULL);
-    gboolean enable_vbr = g_key_file_get_boolean(app->config, "audio", "enable_vbr", NULL);
-    rtp_session_set_bitrate(app->session, bitrate, enable_vbr);
-
-    rtp_session_bind_volume(app->session, app->button_volume, "value");
-    rtp_session_play(app->session);
-
-    gtk_widget_set_sensitive(app->button_stop, TRUE);
-}
-
 static void new_connection(Application *app, DhtId *id, GSocket *socket, DhtKey *enc_key, DhtKey *dec_key)
 {
     const gchar *alias = g_hash_table_lookup(app->id2alias_table, id);
@@ -166,14 +170,6 @@ static void new_connection(Application *app, DhtId *id, GSocket *socket, DhtKey 
         gtk_widget_show(app->main_window);
 }
 
-static void window_toggle(Application *app)
-{
-    if(!gtk_widget_get_visible(app->main_window))
-        gtk_widget_show(app->main_window);
-    else
-        gtk_widget_hide(app->main_window);
-}
-
 static void completion_update(Application *app)
 {
     GtkTextIter start;
@@ -185,7 +181,7 @@ static void completion_update(Application *app)
         gtk_text_iter_forward_line(&end);
 
         GtkTextIter mark = start;
-        gtk_text_iter_forward_chars(&mark, (((4 * DHT_ID_SIZE / 3) + 3) & ~3));
+        gtk_text_iter_forward_chars(&mark, ((4 * DHT_ID_SIZE / 3) + 3) & ~3);
         if(gtk_text_iter_compare(&mark, &end) < 0)
         {
             DhtId id;
@@ -230,11 +226,15 @@ static void editor_save(Application *app)
         gtk_text_buffer_get_end_iter(app->aliases_buffer, &end);
         g_autofree gchar *aliases_data = gtk_text_iter_get_slice(&start, &end);
 
-        g_autoptr(GError) error = NULL;
+        GError *error = NULL;
         g_autofree gchar *base_path = g_build_filename(g_get_home_dir(), ".nanotalk", NULL);
         g_autofree gchar *aliases_path = g_build_filename(base_path, "aliases.txt", NULL);
-        if(!g_file_set_contents(aliases_path, aliases_data, -1, &error))
+        g_file_set_contents(aliases_path, aliases_data, -1, &error);
+        if(error)
+        {
             g_message("%s", error->message);
+            g_clear_error(&error);
+        }
     }
 
     gtk_widget_hide(app->editor_window);
@@ -282,6 +282,7 @@ static void editor_show(Application *app, GtkEntryIconPosition icon_pos, GdkEven
 
 static void config_apply(Application *app)
 {
+    GError *error = NULL;
     gboolean need_bootstrap = FALSE;
     guint16 local_port = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(app->spin_local_port));
     if(local_port != g_key_file_get_integer(app->config, "network", "local-port", NULL))
@@ -291,31 +292,27 @@ static void config_apply(Application *app)
         g_object_get(app->client, "key", &key, "listen", &listen, NULL);
         DhtClient *client = dht_client_new(key);
 
-        g_autoptr(GError) error = NULL;
         g_autoptr(GInetAddress) inaddr_any = g_inet_address_new_any(DHT_ADDRESS_FAMILY);
         g_autoptr(GSocketAddress) address = g_inet_socket_address_new(inaddr_any, local_port);
-        if(!dht_client_bind(client, address, FALSE, &error))
-        {
-            g_message("%s", error->message);
-            g_clear_object(&client);
-        }
-        else
+        if(dht_client_bind(client, address, FALSE, &error))
         {
             g_object_set(client, "listen", listen, NULL);
             g_signal_connect_swapped(client, "new-connection", (GCallback)new_connection, app);
-            if(app->binding_peers)
-            {
-                GObject *target = g_binding_get_target(app->binding_peers);
-                g_object_unref(app->binding_peers);
-
-                app->binding_peers = g_object_bind_property(client, "peers", target, "label", G_BINDING_SYNC_CREATE);
-            }
+            g_object_bind_property(client, "peers", app->label_peers, "label", G_BINDING_SYNC_CREATE);
 
             g_object_unref(app->client);
             app->client = client;
 
             need_bootstrap = TRUE;
             g_key_file_set_integer(app->config, "network", "local-port", local_port);
+        }
+
+        if(error)
+        {
+            g_message("%s", error->message);
+            g_clear_error(&error);
+
+            g_clear_object(&client);
         }
     }
 
@@ -327,7 +324,6 @@ static void config_apply(Application *app)
     {
         if(bootstrap_host[0] && bootstrap_port)
         {
-            g_autoptr(GError) error = NULL;
             g_autoptr(GResolver) resolver = g_resolver_get_default();
             GList *list = g_resolver_lookup_by_name(resolver, bootstrap_host, NULL, &error);
             if(list)
@@ -336,7 +332,12 @@ static void config_apply(Application *app)
                 dht_client_bootstrap(app->client, address);
                 g_resolver_free_addresses(list);
             }
-            else g_message("%s", error->message);
+
+            if(error)
+            {
+                g_message("%s", error->message);
+                g_clear_error(&error);
+            }
         }
 
         g_key_file_set_string(app->config, "network", "bootstrap-host", bootstrap_host);
@@ -349,11 +350,14 @@ static void config_apply(Application *app)
     g_key_file_set_boolean(app->config, "audio", "enable-vbr", enable_vbr);
     if(app->session) rtp_session_set_bitrate(app->session, bitrate, enable_vbr);
 
-    g_autoptr(GError) error = NULL;
     g_autofree gchar *base_path = g_build_filename(g_get_home_dir(), ".nanotalk", NULL);
     g_autofree gchar *config_path = g_build_filename(base_path, "user.cfg", NULL);
-    if(!g_key_file_save_to_file(app->config, config_path, &error))
+    g_key_file_save_to_file(app->config, config_path, &error);
+    if(error)
+    {
         g_message("%s", error->message);
+        g_clear_error(&error);
+    }
 }
 
 static void config_show(Application *app)
@@ -401,9 +405,9 @@ static void config_show(Application *app)
     label = gtk_label_new(_("Number of peers"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 1, 1, 1);
-    label = gtk_label_new(NULL);
-    app->binding_peers = g_object_bind_property(app->client, "peers", label, "label", G_BINDING_SYNC_CREATE);
-    gtk_grid_attach(GTK_GRID(grid), label, 1, 1, 1, 1);
+    app->label_peers = gtk_label_new(NULL);
+    g_object_bind_property(app->client, "peers", app->label_peers, "label", G_BINDING_SYNC_CREATE);
+    gtk_grid_attach(GTK_GRID(grid), app->label_peers, 1, 1, 1, 1);
 
     seperator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_grid_attach(GTK_GRID(grid), seperator, 0, 2, 2, 1);
@@ -527,6 +531,14 @@ static void menu_popup(Application *app, guint button, guint activate_time)
     gtk_menu_popup(GTK_MENU(app->status_menu), NULL, NULL, gtk_status_icon_position_menu, app->status_icon, button, activate_time);
 }
 
+static void window_toggle(Application *app)
+{
+    if(!gtk_widget_get_visible(app->main_window))
+        gtk_widget_show(app->main_window);
+    else
+        gtk_widget_hide(app->main_window);
+}
+
 static void application_startup(Application *app)
 {
     g_object_set(app->client, "listen", TRUE, NULL);
@@ -599,12 +611,6 @@ static void application_startup(Application *app)
     g_object_set(app->status_icon, "tooltip-text", "Nanotalk", "title", "Nanotalk", NULL);
 }
 
-void application_init(gint argc, gchar *argv[])
-{
-    gtk_init(&argc, &argv);
-    gst_init(&argc, &argv);
-}
-
 void application_run(DhtClient *client, GKeyFile *config)
 {
     if(!g_key_file_has_group(config, "audio"))
@@ -625,7 +631,6 @@ void application_run(DhtClient *client, GKeyFile *config)
     if(app->config_window) gtk_widget_destroy(app->config_window);
     if(app->editor_window) gtk_widget_destroy(app->editor_window);
     if(app->status_menu) gtk_widget_destroy(app->status_menu);
-    if(app->binding_peers) g_object_unref(app->binding_peers);
 
     gtk_widget_destroy(app->main_window);
     g_object_unref(app->status_icon);
@@ -637,4 +642,10 @@ void application_run(DhtClient *client, GKeyFile *config)
 
     g_key_file_unref(config);
     g_object_unref(client);
+}
+
+void application_init(gint argc, gchar *argv[])
+{
+    gtk_init(&argc, &argv);
+    gst_init(&argc, &argv);
 }

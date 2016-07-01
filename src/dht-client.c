@@ -414,7 +414,7 @@ static void dht_client_finalize(GObject *obj)
 static void dht_client_update(DhtClient *client, const DhtId *id, const DhtAddress *addr, gboolean is_alive)
 {
     DhtClientPrivate *priv = dht_client_get_instance_private(client);
-    g_debug("Update node %08x %s (%s)", dht_id_hash(id), dht_address_print(addr), is_alive ? "alive" : "timed-out");
+    g_debug("Update node %08x (%s)", dht_id_hash(id), is_alive ? "alive" : "timed-out");
 
     DhtId metric;
     dht_id_xor(&metric, &priv->id, id);
@@ -546,7 +546,7 @@ static guint dht_client_search(DhtClient *client, const DhtId *id, MsgNode *node
                 }
                 else
                 {
-                    g_debug("Delete node %08x %s", dht_id_hash(&node->id), dht_address_print(&node->addr));
+                    g_debug("Delete node %08x", dht_id_hash(&node->id));
 
                     // Delete dead node
                     g_slice_free(DhtNode, node);

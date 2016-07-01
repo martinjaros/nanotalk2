@@ -30,7 +30,6 @@ typedef struct _RtpSessionPrivate RtpSessionPrivate;
 
 struct _RtpSessionPrivate
 {
-    GBinding *volume_binding;
     GstElement *rx_pipeline, *tx_pipeline;
     guint rx_watch, tx_watch;
 };
@@ -45,10 +44,13 @@ static GstCaps* request_pt_map_cb(GstElement *element, guint pt, gpointer arg);
 static void new_payload_type_cb(GstElement *element, guint pt, GstPad *pad, gpointer arg);
 static gboolean bus_watch_cb(GstBus *bus, GstMessage *message, gpointer arg);
 
-static inline GstElement* assert_element(const gchar *factory, const gchar *name)
+static inline GstElement* assert_element(GstBin *bin, const gchar *factory, const gchar *name)
 {
     GstElement *element = gst_element_factory_make(factory, name);
-    if(element == NULL) g_error(_("Missing GStreamer element: %s"), name);
+    if(element)
+        gst_bin_add(bin, element);
+    else
+        g_warning(_("Missing GStreamer element: %s"), name);
 
     return element;
 }
@@ -82,15 +84,21 @@ RtpSession* rtp_session_new(GSocket *socket, DhtKey *enc_key, DhtKey *dec_key)
     RtpSession *session = g_object_new(RTP_TYPE_SESSION, NULL);
     RtpSessionPrivate *priv = rtp_session_get_instance_private(session);
 
+    GstElement *audio_src = assert_element(GST_BIN(priv->tx_pipeline), "autoaudiosrc", "audio_src");
+    GstElement *audio_enc = assert_element(GST_BIN(priv->tx_pipeline), "opusenc", "audio_enc");
+    GstElement *audio_pay = assert_element(GST_BIN(priv->tx_pipeline), "rtpopuspay", "audio_pay");
+    GstElement *rtp_demux = assert_element(GST_BIN(priv->rx_pipeline), "rtpptdemux", "rtp_demux");
+    GstElement *audio_buffer = assert_element(GST_BIN(priv->rx_pipeline), "rtpjitterbuffer", "audio_buffer");
+    GstElement *audio_depay = assert_element(GST_BIN(priv->rx_pipeline), "rtpopusdepay", "audio_depay");
+    GstElement *audio_dec = assert_element(GST_BIN(priv->rx_pipeline), "opusdec", "audio_dec");
+    GstElement *audio_volume = assert_element(GST_BIN(priv->rx_pipeline), "volume", "audio_volume");
+    GstElement *audio_sink = assert_element(GST_BIN(priv->rx_pipeline), "autoaudiosink", "audio_sink");
+    if(!audio_src || !audio_enc || !audio_pay || !rtp_demux || !audio_buffer || !audio_depay || !audio_dec || !audio_volume || !audio_sink)
+        return session;
+
     // Receiving pipeline
     GstElement *rtp_src = rtp_src_new(dec_key, socket, "rtp_src");
-    GstElement *rtp_demux = assert_element("rtpptdemux", "rtp_demux");
-    GstElement *audio_buffer = assert_element("rtpjitterbuffer", "audio_buffer");
-    GstElement *audio_depay = assert_element("rtpopusdepay", "audio_depay");
-    GstElement *audio_dec = assert_element("opusdec", "audio_dec");
-    GstElement *audio_volume = assert_element("volume", "audio_volume");
-    GstElement *audio_sink = assert_element("autoaudiosink", "audio_sink");
-    gst_bin_add_many(GST_BIN(priv->rx_pipeline), rtp_src, rtp_demux, audio_buffer, audio_depay, audio_dec, audio_volume, audio_sink, NULL);
+    gst_bin_add(GST_BIN(priv->rx_pipeline), rtp_src);
     gst_element_link_many(audio_buffer, audio_depay, audio_dec, audio_volume, audio_sink, NULL);
     gst_element_link(rtp_src, rtp_demux);
 
@@ -102,12 +110,9 @@ RtpSession* rtp_session_new(GSocket *socket, DhtKey *enc_key, DhtKey *dec_key)
 #endif
 
     // Transmitting pipeline
-    GstElement *audio_src = assert_element("autoaudiosrc", "audio_src");
     GstElement *audio_tone = rtp_tone_new("audio_tone");
-    GstElement *audio_enc = assert_element("opusenc", "audio_enc");
-    GstElement *audio_pay = assert_element("rtpopuspay", "audio_pay");
     GstElement *audio_sink_rtp = rtp_sink_new(enc_key, socket, "audio_sink");
-    gst_bin_add_many(GST_BIN(priv->tx_pipeline), audio_src, audio_tone, audio_enc, audio_pay, audio_sink_rtp, NULL);
+    gst_bin_add_many(GST_BIN(priv->tx_pipeline), audio_tone, audio_sink_rtp, NULL);
     gst_element_link_many(audio_src, audio_tone, audio_enc, audio_pay, audio_sink_rtp, NULL);
 
     return session;
@@ -121,10 +126,7 @@ void rtp_session_bind_volume(RtpSession *session, gpointer source, const gchar *
     GstElement *audio_volume = gst_bin_get_by_name(GST_BIN(priv->rx_pipeline), "audio_volume");
     if(audio_volume)
     {
-        if(priv->volume_binding)
-            g_binding_unbind(priv->volume_binding);
-
-        priv->volume_binding = g_object_bind_property(source, property, audio_volume, "volume", G_BINDING_SYNC_CREATE);
+        g_object_bind_property(source, property, audio_volume, "volume", G_BINDING_SYNC_CREATE);
         gst_object_unref(audio_volume);
     }
 }
@@ -191,9 +193,6 @@ static void rtp_session_finalize(GObject *obj)
     RtpSession *session = RTP_SESSION(obj);
     RtpSessionPrivate *priv = rtp_session_get_instance_private(session);
 
-    if(priv->volume_binding)
-        g_binding_unbind(priv->volume_binding);
-
     gst_object_unref(priv->rx_pipeline);
     g_source_remove(priv->rx_watch);
 
@@ -229,24 +228,32 @@ static void new_payload_type_cb(GstElement *element, guint pt, GstPad *pad, gpoi
         case 96:
         {
             GstElement *audio_buffer = gst_bin_get_by_name(GST_BIN(priv->rx_pipeline), "audio_buffer");
-            GstPad *sinkpad = gst_element_get_static_pad(audio_buffer, "sink");
-            gst_pad_link(pad, sinkpad);
-            gst_object_unref(sinkpad);
-            gst_object_unref(audio_buffer);
+            if(audio_buffer)
+            {
+                GstPad *sinkpad = gst_element_get_static_pad(audio_buffer, "sink");
+                gst_pad_link(pad, sinkpad);
+                gst_object_unref(sinkpad);
+                gst_object_unref(audio_buffer);
+            }
+
             break;
         }
 
         default:
         {
             g_debug("Unknown payload type %u", pt);
+
             GstElement *fakesink = gst_element_factory_make("fakesink", NULL);
-            gst_bin_add(GST_BIN(priv->rx_pipeline), fakesink);
+            if(fakesink)
+            {
+                gst_bin_add(GST_BIN(priv->rx_pipeline), fakesink);
 
-            GstPad *sinkpad = gst_element_get_static_pad(fakesink, "sink");
-            gst_pad_link(pad, sinkpad);
-            gst_object_unref(sinkpad);
+                GstPad *sinkpad = gst_element_get_static_pad(fakesink, "sink");
+                gst_pad_link(pad, sinkpad);
+                gst_object_unref(sinkpad);
 
-            gst_element_sync_state_with_parent(fakesink);
+                gst_element_sync_state_with_parent(fakesink);
+            }
         }
     }
 }

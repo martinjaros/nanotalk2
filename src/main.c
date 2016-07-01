@@ -59,7 +59,8 @@ static DhtClient* startup(GKeyFile *config)
     guint16 local_port = g_key_file_get_integer(config, "network", "local-port", NULL);
     g_autoptr(GInetAddress) inaddr_any = g_inet_address_new_any(DHT_ADDRESS_FAMILY);
     g_autoptr(GSocketAddress) local_address = g_inet_socket_address_new(inaddr_any, local_port);
-    if(!dht_client_bind(client, local_address, FALSE, &error))
+    dht_client_bind(client, local_address, FALSE, &error);
+    if(error)
     {
         g_printerr("%s\n", error->message);
         g_clear_error(&error);
@@ -78,7 +79,8 @@ static DhtClient* startup(GKeyFile *config)
             dht_client_bootstrap(client, address);
             g_resolver_free_addresses(list);
         }
-        else
+
+        if(error)
         {
             g_printerr("%s\n", error->message);
             g_clear_error(&error);
