@@ -15,7 +15,6 @@
 #define G_LOG_DOMAIN "RTP"
 
 #include <string.h>
-#include <sodium.h>
 #include "rtp-sink.h"
 
 GST_DEBUG_CATEGORY_STATIC(rtp_sink_debug);
@@ -128,9 +127,10 @@ static void rtp_sink_get_property(GObject *object, guint prop_id, GValue *value,
 static GstFlowReturn rtp_sink_render(GstBaseSink *basesink, GstBuffer *buffer)
 {
     RtpSink *sink = RTP_SINK(basesink);
+    gsize len = gst_buffer_get_size(buffer);
 
     GstMapInfo map;
-    if((gst_buffer_get_size(buffer) > 12) && gst_buffer_map(buffer, &map, GST_MAP_READ))
+    if((len > 12) && gst_buffer_map(buffer, &map, GST_MAP_READ))
     {
         guint16 seq = GST_READ_UINT16_BE(map.data + 2);
         guint32 ssrc = GST_READ_UINT32_BE(map.data + 8);
@@ -142,12 +142,13 @@ static GstFlowReturn rtp_sink_render(GstBaseSink *basesink, GstBuffer *buffer)
         if((seq == G_MAXUINT16) && (++sink->roc == 0x1000000000000))
             GST_ELEMENT_ERROR(sink, STREAM, DECRYPT, ("Key utilization limit was reached."), (NULL));
 
-        guint8 packet[map.size + 16];
+        guint8 packet[len + 16];
         memcpy(packet, map.data, 12);
-        crypto_aead_chacha20poly1305_ietf_encrypt(packet + 12, NULL, map.data + 12, map.size - 12, map.data, 12, NULL, nonce, sink->key.data);
+        dht_aead_xor(packet + 12, map.data + 12, len - 12, nonce, &sink->key);
+        dht_aead_auth(packet + len, packet, 12, packet + 12, len - 12, nonce, &sink->key);
 
         g_autoptr(GError) error = NULL;
-        g_socket_send(sink->socket, (gchar*)packet, sizeof(packet), NULL, &error);
+        g_socket_send(sink->socket, (gchar*)packet, len + 16, NULL, &error);
         if(error) GST_ELEMENT_ERROR(sink, RESOURCE, WRITE, ("%s", error->message), (NULL));
 
         gst_buffer_unmap(buffer, &map);

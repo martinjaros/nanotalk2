@@ -5,14 +5,14 @@ import os, sys, subprocess
 os.environ['PULSE_PROP'] = 'filter.want=echo-cancel'
 os.environ['G_MESSAGES_DEBUG'] = 'all'
 
-#os.environ['GST_DEBUG'] = '*:WARNING'
-#os.environ['GST_DEBUG_DUMP_DOT_DIR'] = '.'
+# os.environ['GST_DEBUG'] = '*:WARNING'
+# os.environ['GST_DEBUG_DUMP_DOT_DIR'] = '.'
 
 os.environ['HOME'] = 'Test1'
-proc1 = subprocess.Popen('../src/nanotalk')
+proc1 = subprocess.Popen('nanotalk')
 
 os.environ['HOME'] = 'Test2'
-proc2 = subprocess.Popen('../src/nanotalk')
+proc2 = subprocess.Popen('nanotalk')
 
 try:
     proc1.wait()

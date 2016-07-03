@@ -375,7 +375,7 @@ static void config_show(Application *app)
     gtk_window_set_destroy_with_parent(GTK_WINDOW(app->config_window), TRUE);
     gtk_window_set_type_hint(GTK_WINDOW(app->config_window), GDK_WINDOW_TYPE_HINT_DIALOG);
 
-    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 15);
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_add(GTK_CONTAINER(app->config_window), vbox);
 
     GtkWidget *label, *seperator;
@@ -609,6 +609,8 @@ static void application_startup(Application *app)
     g_signal_connect_swapped(app->status_icon, "popup-menu", (GCallback)menu_popup, app);
     g_signal_connect_swapped(app->status_icon, "activate", (GCallback)window_toggle, app);
     g_object_set(app->status_icon, "tooltip-text", "Nanotalk", "title", "Nanotalk", NULL);
+    gtk_status_icon_set_visible(app->status_icon, FALSE);
+    gtk_status_icon_set_visible(app->status_icon, TRUE);
 }
 
 void application_run(DhtClient *client, GKeyFile *config)

@@ -26,6 +26,36 @@ static int init()
     return sodium_init();
 }
 
+void dht_aead_xor(gpointer c, gconstpointer m, gsize m_len, gconstpointer n, const DhtKey *key)
+{
+    crypto_stream_chacha20_ietf_xor_ic(c, m, m_len, n, 1, key->data);
+}
+
+void dht_aead_auth(gpointer mac, gconstpointer a, gsize a_len, gconstpointer c, gsize c_len, gconstpointer n, const DhtKey *key)
+{
+    guint8 tmp[64];
+    crypto_stream_chacha20_ietf(tmp, 64, n, key->data);
+
+    crypto_onetimeauth_poly1305_state state;
+    crypto_onetimeauth_poly1305_init(&state, tmp);
+    crypto_onetimeauth_poly1305_update(&state, a, a_len);
+    crypto_onetimeauth_poly1305_update(&state, c, c_len);
+    crypto_onetimeauth_poly1305_final(&state, mac);
+}
+
+gboolean dht_aead_verify(gconstpointer mac, gconstpointer a, gsize a_len, gconstpointer c, gsize c_len, gconstpointer n, const DhtKey *key)
+{
+    guint8 tmp[64];
+    crypto_stream_chacha20_ietf(tmp, 64, n, key->data);
+
+    crypto_onetimeauth_poly1305_state state;
+    crypto_onetimeauth_poly1305_init(&state, tmp);
+    crypto_onetimeauth_poly1305_update(&state, a, a_len);
+    crypto_onetimeauth_poly1305_update(&state, c, c_len);
+    crypto_onetimeauth_poly1305_final(&state, tmp);
+    return sodium_memcmp(tmp, mac, 16) == 0;
+}
+
 void dht_key_make_random(DhtKey *key)
 {
     randombytes_buf(key->data, DHT_KEY_SIZE);
@@ -33,12 +63,12 @@ void dht_key_make_random(DhtKey *key)
 
 void dht_key_make_public(DhtKey *pubkey, const DhtKey *privkey)
 {
-    crypto_scalarmult_base(pubkey->data, privkey->data);
+    crypto_scalarmult_curve25519_base(pubkey->data, privkey->data);
 }
 
 gboolean dht_key_make_shared(DhtKey *shared, const DhtKey *privkey, const DhtKey *pubkey)
 {
-    return crypto_scalarmult(shared->data, privkey->data, pubkey->data) == 0;
+    return crypto_scalarmult_curve25519(shared->data, privkey->data, pubkey->data) == 0;
 }
 
 void dht_key_derive(DhtKey *key, DhtKey *tag, const DhtKey *shared, const DhtKey *tx_nonce, const DhtKey *rx_nonce)
@@ -46,10 +76,10 @@ void dht_key_derive(DhtKey *key, DhtKey *tag, const DhtKey *shared, const DhtKey
     crypto_generichash_state state;
     DhtKey result[2];
 
-    crypto_generichash_init(&state, shared->data, DHT_KEY_SIZE, 2 * DHT_KEY_SIZE);
-    crypto_generichash_update(&state, tx_nonce->data, DHT_KEY_SIZE);
-    crypto_generichash_update(&state, rx_nonce->data, DHT_KEY_SIZE);
-    crypto_generichash_final(&state, result[0].data, 2 * DHT_KEY_SIZE);
+    crypto_generichash_blake2b_init(&state, shared->data, DHT_KEY_SIZE, 2 * DHT_KEY_SIZE);
+    crypto_generichash_blake2b_update(&state, tx_nonce->data, DHT_KEY_SIZE);
+    crypto_generichash_blake2b_update(&state, rx_nonce->data, DHT_KEY_SIZE);
+    crypto_generichash_blake2b_final(&state, result[0].data, 2 * DHT_KEY_SIZE);
 
     *key = result[0];
     *tag = result[1];
@@ -57,7 +87,7 @@ void dht_key_derive(DhtKey *key, DhtKey *tag, const DhtKey *shared, const DhtKey
 
 void dht_id_from_pubkey(DhtId *id, const DhtKey *pubkey)
 {
-    crypto_generichash(id->data, DHT_ID_SIZE, pubkey->data, DHT_KEY_SIZE, NULL, 0);
+    crypto_generichash_blake2b(id->data, DHT_ID_SIZE, pubkey->data, DHT_KEY_SIZE, NULL, 0);
 }
 
 gboolean dht_id_from_string(DhtId *id, const gchar *str)
@@ -168,7 +198,6 @@ gint dht_id_compare(gconstpointer a, gconstpointer b, gpointer arg)
 
 void dht_key_free(gpointer key)
 {
-    memset(key, 0, DHT_KEY_SIZE);
     g_slice_free(DhtKey, key);
 }
 

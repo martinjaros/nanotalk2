@@ -15,7 +15,6 @@
 #define G_LOG_DOMAIN "RTP"
 
 #include <string.h>
-#include <sodium.h>
 #include "rtp-src.h"
 
 GST_DEBUG_CATEGORY_STATIC(rtp_src_debug);
@@ -54,7 +53,7 @@ G_DEFINE_TYPE(RtpSrc, rtp_src, GST_TYPE_PUSH_SRC)
 static void rtp_src_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec);
 static void rtp_src_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec);
 static gboolean rtp_src_negotiate(GstBaseSrc *basesrc);
-static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **buf);
+static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **outbuf);
 static gboolean rtp_src_unlock(GstBaseSrc *basesrc);
 static gboolean rtp_src_unlock_stop(GstBaseSrc *basesrc);
 static void rtp_src_finalize(GObject *object);
@@ -183,7 +182,7 @@ static gboolean rtp_src_negotiate(GstBaseSrc *basesrc)
     return FALSE;
 }
 
-static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **buf)
+static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **outbuf)
 {
     RtpSrc *src = RTP_SRC(pushsrc);
 
@@ -210,16 +209,6 @@ static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **buf)
 
         if(len > 28)
         {
-            GstBuffer *buffer = gst_buffer_new_allocate(src->allocator, len - 16, &src->params);
-            if(!buffer) return GST_FLOW_ERROR;
-
-            GstMapInfo map;
-            if(!gst_buffer_map(buffer, &map, GST_MAP_WRITE))
-            {
-                gst_buffer_unref(buffer);
-                return GST_FLOW_ERROR;
-            }
-
             guint16 seq = GST_READ_UINT16_BE(packet + 2);
             guint32 ssrc = GST_READ_UINT32_BE(packet + 8);
 
@@ -236,9 +225,21 @@ static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **buf)
             GST_WRITE_UINT64_LE(nonce, roc << 16 | (guint64)seq);
             GST_WRITE_UINT32_LE(nonce + 8, ssrc);
 
-            if(crypto_aead_chacha20poly1305_ietf_decrypt(map.data + 12, NULL, NULL, packet + 12, len - 12, packet, 12, nonce, src->key.data) == 0)
+            len -= 16;
+            if(dht_aead_verify(packet + len, packet, 12, packet + 12, len - 12, nonce, &src->key))
             {
+                GstBuffer *buffer = gst_buffer_new_allocate(src->allocator, len, &src->params);
+                if(!buffer) return GST_FLOW_ERROR;
+
+                GstMapInfo map;
+                if(!gst_buffer_map(buffer, &map, GST_MAP_WRITE))
+                {
+                    gst_buffer_unref(buffer);
+                    return GST_FLOW_ERROR;
+                }
+
                 memcpy(map.data, packet, 12);
+                dht_aead_xor(map.data + 12, packet + 12, len - 12, nonce, &src->key);
                 gst_buffer_unmap(buffer, &map);
 
                 if(!stream)
@@ -251,12 +252,10 @@ static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **buf)
                 stream->seq_last = seq;
                 stream->roc = roc;
 
-                *buf = buffer;
+                *outbuf = buffer;
                 return GST_FLOW_OK;
             }
-
-            gst_buffer_unmap(buffer, &map);
-            gst_buffer_unref(buffer);
+            else GST_WARNING_OBJECT(src, "Authentication failed.");
         }
 
         if(len < 0) break;

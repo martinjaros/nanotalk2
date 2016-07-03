@@ -47,6 +47,11 @@ struct _DhtAddress
     guint8 data[DHT_ADDRESS_SIZE];
 };
 
+// 12-byte nonce, 16-byte MAC
+void dht_aead_xor(gpointer c, gconstpointer m, gsize m_len, gconstpointer n, const DhtKey *key);
+void dht_aead_auth(gpointer mac, gconstpointer a, gsize a_len, gconstpointer c, gsize c_len, gconstpointer n, const DhtKey *key);
+gboolean dht_aead_verify(gconstpointer mac, gconstpointer a, gsize a_len, gconstpointer c, gsize c_len, gconstpointer n, const DhtKey *key);
+
 void dht_key_make_random(DhtKey *key);
 void dht_key_make_public(DhtKey *pubkey, const DhtKey *privkey);
 gboolean dht_key_make_shared(DhtKey *shared, const DhtKey *privkey, const DhtKey *pubkey);
