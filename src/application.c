@@ -280,6 +280,19 @@ static void editor_show(Application *app, GtkEntryIconPosition icon_pos, GdkEven
     gtk_widget_show_all(app->editor_window);
 }
 
+static void resolver_finish_cb(GSocketAddressEnumerator *enumerator, GAsyncResult *result, Application *app)
+{
+    GError *error = NULL;
+    g_autoptr(GSocketAddress) address = g_socket_address_enumerator_next_finish(enumerator, result, &error);
+    if(address) dht_client_bootstrap(app->client, address);
+
+    if(error)
+    {
+        g_message("%s", error->message);
+        g_clear_error(&error);
+    }
+}
+
 static void config_apply(Application *app)
 {
     GError *error = NULL;
@@ -312,7 +325,7 @@ static void config_apply(Application *app)
             g_message("%s", error->message);
             g_clear_error(&error);
 
-            g_clear_object(&client);
+            g_object_unref(client);
         }
     }
 
@@ -324,20 +337,9 @@ static void config_apply(Application *app)
     {
         if(bootstrap_host[0] && bootstrap_port)
         {
-            g_autoptr(GResolver) resolver = g_resolver_get_default();
-            GList *list = g_resolver_lookup_by_name(resolver, bootstrap_host, NULL, &error);
-            if(list)
-            {
-                g_autoptr(GSocketAddress) address = g_inet_socket_address_new(list->data, bootstrap_port);
-                dht_client_bootstrap(app->client, address);
-                g_resolver_free_addresses(list);
-            }
-
-            if(error)
-            {
-                g_message("%s", error->message);
-                g_clear_error(&error);
-            }
+            g_autoptr(GSocketConnectable) address = g_network_address_new(bootstrap_host, bootstrap_port);
+            g_autoptr(GSocketAddressEnumerator) enumerator = g_socket_connectable_enumerate(address);
+            g_socket_address_enumerator_next_async(enumerator, NULL, (GAsyncReadyCallback)resolver_finish_cb, app);
         }
 
         g_key_file_set_string(app->config, "network", "bootstrap-host", bootstrap_host);
