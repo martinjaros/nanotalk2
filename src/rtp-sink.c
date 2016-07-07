@@ -127,29 +127,32 @@ static void rtp_sink_get_property(GObject *object, guint prop_id, GValue *value,
 static GstFlowReturn rtp_sink_render(GstBaseSink *basesink, GstBuffer *buffer)
 {
     RtpSink *sink = RTP_SINK(basesink);
-    gsize len = gst_buffer_get_size(buffer);
 
     GstMapInfo map;
-    if((len > 12) && gst_buffer_map(buffer, &map, GST_MAP_READ))
+    if(gst_buffer_map(buffer, &map, GST_MAP_READ))
     {
-        guint16 seq = GST_READ_UINT16_BE(map.data + 2);
-        guint32 ssrc = GST_READ_UINT32_BE(map.data + 8);
+        if((map.size > 12) && (map.data[0] == 0x80))
+        {
+            guint16 seq = GST_READ_UINT16_BE(map.data + 2);
+            guint32 ssrc = GST_READ_UINT32_BE(map.data + 8);
 
-        guint8 nonce[12];
-        GST_WRITE_UINT64_LE(nonce, sink->roc << 16 | (guint64)seq);
-        GST_WRITE_UINT32_LE(nonce + 8, ssrc);
+            guint8 nonce[12];
+            GST_WRITE_UINT64_LE(nonce, sink->roc << 16 | (guint64)seq);
+            GST_WRITE_UINT32_LE(nonce + 8, ssrc);
 
-        if((seq == G_MAXUINT16) && (++sink->roc == 0x1000000000000))
-            GST_ELEMENT_ERROR(sink, STREAM, DECRYPT, ("Key utilization limit was reached."), (NULL));
+            if((seq == G_MAXUINT16) && (++sink->roc == 0x1000000000000))
+                GST_ELEMENT_ERROR(sink, STREAM, DECRYPT, ("Key utilization limit was reached"), (NULL));
 
-        guint8 packet[len + 16];
-        memcpy(packet, map.data, 12);
-        dht_aead_xor(packet + 12, map.data + 12, len - 12, nonce, &sink->key);
-        dht_aead_auth(packet + len, packet, 12, packet + 12, len - 12, nonce, &sink->key);
+            guint8 packet[map.size + 16];
+            memcpy(packet, map.data, 12);
+            dht_aead_xor(packet + 12, map.data + 12, map.size - 12, nonce, &sink->key);
+            dht_aead_auth(packet + map.size, map.data, 12, packet + 12, map.size - 12, nonce, &sink->key);
 
-        g_autoptr(GError) error = NULL;
-        g_socket_send(sink->socket, (gchar*)packet, len + 16, NULL, &error);
-        if(error) GST_ELEMENT_ERROR(sink, RESOURCE, WRITE, ("%s", error->message), (NULL));
+            g_autoptr(GError) error = NULL;
+            g_socket_send(sink->socket, (gchar*)packet, map.size + 16, NULL, &error);
+            if(error) GST_ELEMENT_ERROR(sink, RESOURCE, WRITE, ("%s", error->message), (NULL));
+        }
+        else GST_ELEMENT_ERROR(sink, STREAM, FORMAT, ("Invalid RTP header"), (NULL));
 
         gst_buffer_unmap(buffer, &map);
         return GST_FLOW_OK;

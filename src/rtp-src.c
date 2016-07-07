@@ -207,7 +207,7 @@ static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **outbuf)
             return GST_FLOW_ERROR;
         }
 
-        if(len > 28)
+        if((len > 28) && (packet[0] == 0x80))
         {
             guint16 seq = GST_READ_UINT16_BE(packet + 2);
             guint32 ssrc = GST_READ_UINT32_BE(packet + 8);
@@ -255,8 +255,9 @@ static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **outbuf)
                 *outbuf = buffer;
                 return GST_FLOW_OK;
             }
-            else GST_WARNING_OBJECT(src, "Authentication failed.");
+            else GST_WARNING_OBJECT(src, "Authentication failed");
         }
+        else GST_WARNING_OBJECT(src, "Invalid packet");
 
         if(len < 0) break;
     }
