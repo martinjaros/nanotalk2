@@ -664,14 +664,14 @@ static void dht_lookup_dispatch(DhtLookup *lookup)
         if(!query->is_finished && (query->timeout_source == 0))
         {
             // Send request
-            MsgLookup msg;
-            msg.type = MSG_LOOKUP_REQ;
-            msg.srcid = priv->id;
-            msg.dstid = lookup->id;
+            MsgLookup request;
+            request.type = MSG_LOOKUP_REQ;
+            request.srcid = priv->id;
+            request.dstid = lookup->id;
 
             g_autoptr(GError) error = NULL;
             g_autoptr(GSocketAddress) sockaddr = dht_address_deserialize(&query->addr);
-            g_socket_send_to(priv->socket, sockaddr, (gchar*)&msg, sizeof(msg), NULL, &error);
+            g_socket_send_to(priv->socket, sockaddr, (gchar*)&request, sizeof(MsgLookup), NULL, &error);
             if(error) g_debug("%s", error->message);
 
             query->timeout_source = g_timeout_add(DHT_TIMEOUT_MS, dht_query_timeout_cb, query);
@@ -768,7 +768,7 @@ static gboolean dht_client_receive_cb(GSocket *socket, GIOCondition condition, g
             msg->type = MSG_LOOKUP_RES;
             msg->srcid = priv->id;
             guint count = dht_client_search(client, &msg->dstid, msg->nodes);
-            g_socket_send_to(socket, sockaddr, (gchar*)buffer, len + count * sizeof(MsgNode), NULL, &error);
+            g_socket_send_to(socket, sockaddr, (gchar*)buffer, sizeof(MsgLookup) + count * sizeof(MsgNode), NULL, &error);
             if(error) g_debug("%s", error->message);
             break;
         }
@@ -835,7 +835,7 @@ static gboolean dht_client_receive_cb(GSocket *socket, GIOCondition condition, g
                 DhtKey shared;
                 if(!dht_key_make_shared(&shared, &priv->privkey, &msg->pubkey)) break;
 
-                GSocket *socket = g_socket_new(DHT_ADDRESS_FAMILY, G_SOCKET_TYPE_DATAGRAM, G_SOCKET_PROTOCOL_UDP, &error);
+                GSocket *connection_socket = g_socket_new(DHT_ADDRESS_FAMILY, G_SOCKET_TYPE_DATAGRAM, G_SOCKET_PROTOCOL_UDP, &error);
                 if(error)
                 {
                     g_debug("%s", error->message);
@@ -858,12 +858,12 @@ static gboolean dht_client_receive_cb(GSocket *socket, GIOCondition condition, g
                 connection->is_remote = TRUE;
                 connection->result = NULL;
                 connection->sockaddr = NULL;
-                connection->socket = socket;
+                connection->socket = connection_socket;
                 connection->timeout_source = g_timeout_add(DHT_TIMEOUT_MS, dht_connection_timeout_cb, connection);
                 g_hash_table_replace(priv->connection_table, &connection->nonce, connection);
 
                 // Send response
-                g_socket_send_to(socket, sockaddr, (gchar*)&response, sizeof(MsgConnection2), NULL, &error);
+                g_socket_send_to(connection_socket, sockaddr, (gchar*)&response, sizeof(MsgConnection2), NULL, &error);
                 if(error) g_debug("%s", error->message);
             }
 

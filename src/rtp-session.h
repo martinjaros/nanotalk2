@@ -27,15 +27,11 @@ struct _RtpSessionClass
     void (*hangup)(RtpSession *session);
 };
 
-RtpSession* rtp_session_new(GSocket *socket, DhtKey *enc_key, DhtKey *dec_key);
+RtpSession* rtp_session_new(GSocket *socket, DhtKey *enc_key, DhtKey *dec_key, gboolean enable_video);
 
-void rtp_session_bind_volume(RtpSession *session, gpointer source, const gchar *property);
+void rtp_session_launch(RtpSession *session, gboolean on_hold);
 
-void rtp_session_set_bitrate(RtpSession *session, guint bitrate, gboolean vbr);
-
-void rtp_session_set_tone(RtpSession *session, gboolean enable);
-
-void rtp_session_play(RtpSession *session);
+void rtp_session_accept(RtpSession *session);
 
 void rtp_session_destroy(RtpSession *session);
 

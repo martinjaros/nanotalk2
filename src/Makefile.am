@@ -6,8 +6,8 @@ nanotalk_SOURCES = main.c dht-common.c dht-client.c
 noinst_HEADERS = dht-common.h dht-client.h glib-compat.h
 
 if ENABLE_GUI
-AM_CFLAGS += $(GTK_CFLAGS) $(GST_CFLAGS)
-LDADD += $(GTK_LIBS) $(GST_LIBS)
-nanotalk_SOURCES += application.c rtp-session.c rtp-src.c rtp-sink.c rtp-tone.c
-noinst_HEADERS += application.h rtp-session.h rtp-src.h rtp-sink.h rtp-tone.h
+AM_CFLAGS += $(GTK_CFLAGS) $(GST_CFLAGS) $(CANBERRA_CFLAGS)
+LDADD += $(GTK_LIBS) $(GST_LIBS) $(CANBERRA_LIBS)
+nanotalk_SOURCES += application.c rtp-session.c rtp-src.c rtp-sink.c
+noinst_HEADERS += application.h rtp-session.h rtp-src.h rtp-sink.h
 endif

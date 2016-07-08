@@ -22,14 +22,12 @@ GST_DEBUG_CATEGORY_STATIC(rtp_src_debug);
 
 #define PACKET_MTU 1500
 
-#define DEFAULT_TIMEOUT 1000000 // 1 second
-
 enum
 {
     PROP_0,
     PROP_KEY,
     PROP_SOCKET,
-    PROP_TIMEOUT
+    PROP_DROP
 };
 
 typedef struct _RtpStream RtpStream;
@@ -70,11 +68,11 @@ static void rtp_src_class_init(RtpSrcClass *src_class)
                 G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     g_object_class_install_property(object_class, PROP_SOCKET,
-        g_param_spec_object("socket", "Socket", "Connected socket", G_TYPE_SOCKET,
+        g_param_spec_object("socket", "Socket", "Session socket", G_TYPE_SOCKET,
                 G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-    g_object_class_install_property(object_class, PROP_TIMEOUT,
-        g_param_spec_int64("timeout", "Timeout", "Socket timeout (us)", -1, G_MAXINT64, DEFAULT_TIMEOUT,
+    g_object_class_install_property(object_class, PROP_DROP,
+        g_param_spec_boolean("drop", "Drop", "Drop buffers", FALSE,
                 G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     GstElementClass *element_class = (GstElementClass*)src_class;
@@ -97,7 +95,6 @@ static void rtp_src_init(RtpSrc *src)
 {
     src->streams = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, rtp_stream_free);
     src->cancellable = g_cancellable_new();
-    src->timeout = DEFAULT_TIMEOUT;
 
     gst_base_src_set_live(GST_BASE_SRC(src), TRUE);
     gst_base_src_set_format(GST_BASE_SRC(src), GST_FORMAT_TIME);
@@ -136,8 +133,8 @@ static void rtp_src_set_property(GObject *object, guint prop_id, const GValue *v
             break;
         }
 
-        case PROP_TIMEOUT:
-            src->timeout = g_value_get_int64(value);
+        case PROP_DROP:
+            src->drop = g_value_get_boolean(value);
             break;
 
         default:
@@ -159,8 +156,8 @@ static void rtp_src_get_property(GObject *object, guint prop_id, GValue *value, 
             g_value_set_object(value, src->socket);
             break;
 
-        case PROP_TIMEOUT:
-            g_value_set_int64(value, src->timeout);
+        case PROP_DROP:
+            g_value_set_boolean(value, src->drop);
             break;
 
         default:
@@ -188,8 +185,10 @@ static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **outbuf)
 
     while(1)
     {
+        guint8 packet[PACKET_MTU];
+
         g_autoptr(GError) error = NULL;
-        g_socket_condition_timed_wait(src->socket, G_IO_IN, src->timeout, src->cancellable, &error);
+        gssize len = g_socket_receive(src->socket, (gchar*)packet, sizeof(packet), src->cancellable, &error);
         if(error)
         {
             if(g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
@@ -199,14 +198,8 @@ static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **outbuf)
             return GST_FLOW_ERROR;
         }
 
-        guint8 packet[PACKET_MTU];
-        gssize len = g_socket_receive(src->socket, (gchar*)packet, sizeof(packet), NULL, &error);
-        if(error)
-        {
-            GST_ELEMENT_ERROR(src, RESOURCE, READ, ("%s", error->message), (NULL));
-            return GST_FLOW_ERROR;
-        }
-
+        if(len < 0) break;
+        if(len == 0) continue;
         if((len > 28) && (packet[0] == 0x80))
         {
             guint16 seq = GST_READ_UINT16_BE(packet + 2);
@@ -228,20 +221,6 @@ static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **outbuf)
             len -= 16;
             if(dht_aead_verify(packet + len, packet, 12, packet + 12, len - 12, nonce, &src->key))
             {
-                GstBuffer *buffer = gst_buffer_new_allocate(src->allocator, len, &src->params);
-                if(!buffer) return GST_FLOW_ERROR;
-
-                GstMapInfo map;
-                if(!gst_buffer_map(buffer, &map, GST_MAP_WRITE))
-                {
-                    gst_buffer_unref(buffer);
-                    return GST_FLOW_ERROR;
-                }
-
-                memcpy(map.data, packet, 12);
-                dht_aead_xor(map.data + 12, packet + 12, len - 12, nonce, &src->key);
-                gst_buffer_unmap(buffer, &map);
-
                 if(!stream)
                 {
                     stream = g_slice_new(RtpStream);
@@ -252,14 +231,29 @@ static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **outbuf)
                 stream->seq_last = seq;
                 stream->roc = roc;
 
-                *outbuf = buffer;
-                return GST_FLOW_OK;
+                if(!src->drop)
+                {
+                    GstBuffer *buffer = gst_buffer_new_allocate(src->allocator, len, &src->params);
+                    if(!buffer) return GST_FLOW_ERROR;
+
+                    GstMapInfo map;
+                    if(!gst_buffer_map(buffer, &map, GST_MAP_WRITE))
+                    {
+                        gst_buffer_unref(buffer);
+                        return GST_FLOW_ERROR;
+                    }
+
+                    memcpy(map.data, packet, 12);
+                    dht_aead_xor(map.data + 12, packet + 12, len - 12, nonce, &src->key);
+                    gst_buffer_unmap(buffer, &map);
+
+                    *outbuf = buffer;
+                    return GST_FLOW_OK;
+                }
             }
             else GST_WARNING_OBJECT(src, "Authentication failed");
         }
         else GST_WARNING_OBJECT(src, "Invalid packet");
-
-        if(len < 0) break;
     }
 
     return GST_FLOW_ERROR;

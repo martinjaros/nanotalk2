@@ -49,7 +49,7 @@ static void rtp_sink_class_init(RtpSinkClass *sink_class)
                 G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     g_object_class_install_property(object_class, PROP_SOCKET,
-        g_param_spec_object("socket", "Socket", "Connected socket", G_TYPE_SOCKET,
+        g_param_spec_object("socket", "Socket", "Session socket", G_TYPE_SOCKET,
                 G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     GstElementClass *element_class = (GstElementClass*)sink_class;

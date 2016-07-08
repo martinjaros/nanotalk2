@@ -25,15 +25,17 @@
 #include "application.h"
 #include "rtp-session.h"
 
-#define DEFAULT_BITRATE 64000
-#define DEFAULT_ENABLE_VBR FALSE
+#define DEFAULT_AUDIO_BITRATE 64000
+#define DEFAULT_VIDEO_BITRATE 256000
+#define DEFAULT_VIDEO_ENABLE FALSE
 
 typedef struct _Application Application;
 
 struct _Application
 {
     GtkWidget *main_window, *main_entry, *button_start, *button_volume, *button_stop, *call_dialog;
-    GtkWidget *config_window, *label_peers, *spin_local_port, *entry_bootstrap_host, *spin_bootstrap_port, *spin_bitrate, *switch_vbr;
+    GtkWidget *config_window, *label_peers, *spin_local_port, *entry_bootstrap_host, *spin_bootstrap_port;
+    GtkWidget *spin_audio_bitrate, *spin_video_bitrate, *switch_video_enable;
     GtkWidget *editor_window, *status_menu;
     GtkStatusIcon *status_icon;
 
@@ -57,15 +59,16 @@ static void lookup_finished_cb(DhtClient *client, GAsyncResult *result, Applicat
     g_autoptr(GSocket) socket = NULL;
     if(dht_client_lookup_finish(client, result, &socket, &enc_key, &dec_key, &error))
     {
-        app->session = rtp_session_new(socket, &enc_key, &dec_key);
+        guint audio_bitrate = g_key_file_get_integer(app->config, "media", "audio-bitrate", NULL);
+        guint video_bitrate = g_key_file_get_integer(app->config, "media", "video-bitrate", NULL);
+        gboolean enable_video = g_key_file_get_boolean(app->config, "media", "video-enable", NULL);
+
+        app->session = rtp_session_new(socket, &enc_key, &dec_key, enable_video);
         g_signal_connect_swapped(app->session, "hangup", (GCallback)call_stop, app);
+        g_object_bind_property(app->button_volume, "value", app->session, "volume", G_BINDING_SYNC_CREATE);
 
-        guint bitrate = g_key_file_get_integer(app->config, "audio", "bitrate", NULL);
-        gboolean enable_vbr = g_key_file_get_boolean(app->config, "audio", "enable_vbr", NULL);
-        rtp_session_set_bitrate(app->session, bitrate, enable_vbr);
-
-        rtp_session_bind_volume(app->session, app->button_volume, "value");
-        rtp_session_play(app->session);
+        g_object_set(app->session, "audio-bitrate", audio_bitrate, "video_bitrate", video_bitrate, NULL);
+        rtp_session_launch(app->session, FALSE);
 
         gtk_widget_set_sensitive(app->button_stop, TRUE);
     }
@@ -124,6 +127,9 @@ static void call_toggle(Application *app)
 
 static gboolean dialog_run(Application *app)
 {
+    if(!app->session)
+        return G_SOURCE_REMOVE;
+
     app->call_dialog = gtk_message_dialog_new_with_markup(GTK_WINDOW(app->main_window),
         GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT, GTK_MESSAGE_QUESTION, GTK_BUTTONS_YES_NO,
         _("Answer an incoming call from <b>%s</b> ?"), gtk_entry_get_text(GTK_ENTRY(app->main_entry)));
@@ -135,7 +141,7 @@ static gboolean dialog_run(Application *app)
     app->call_dialog = NULL;
 
     if(response == GTK_RESPONSE_YES)
-        rtp_session_set_tone(app->session, FALSE);
+        rtp_session_accept(app->session);
     else
         call_stop(app);
 
@@ -152,16 +158,16 @@ static void new_connection(Application *app, DhtId *id, GSocket *socket, DhtKey 
         gtk_entry_set_text(GTK_ENTRY(app->main_entry), tmp);
     }
 
-    app->session = rtp_session_new(socket, enc_key, dec_key);
+    guint audio_bitrate = g_key_file_get_integer(app->config, "media", "audio-bitrate", NULL);
+    guint video_bitrate = g_key_file_get_integer(app->config, "media", "video-bitrate", NULL);
+    gboolean enable_video = g_key_file_get_boolean(app->config, "media", "video-enable", NULL);
+
+    app->session = rtp_session_new(socket, enc_key, dec_key, enable_video);
     g_signal_connect_swapped(app->session, "hangup", (GCallback)call_stop, app);
+    g_object_bind_property(app->button_volume, "value", app->session, "volume", G_BINDING_SYNC_CREATE);
 
-    guint bitrate = g_key_file_get_integer(app->config, "audio", "bitrate", NULL);
-    gboolean enable_vbr = g_key_file_get_boolean(app->config, "audio", "enable_vbr", NULL);
-    rtp_session_set_bitrate(app->session, bitrate, enable_vbr);
-
-    rtp_session_bind_volume(app->session, app->button_volume, "value");
-    rtp_session_set_tone(app->session, TRUE);
-    rtp_session_play(app->session);
+    g_object_set(app->session, "audio-bitrate", audio_bitrate, "video-bitrate", video_bitrate, NULL);
+    rtp_session_launch(app->session, TRUE);
 
     g_idle_add((GSourceFunc)dialog_run, app);
     gtk_widget_set_sensitive(app->button_start, FALSE);
@@ -346,11 +352,13 @@ static void config_apply(Application *app)
         g_key_file_set_integer(app->config, "network", "bootstrap-port", bootstrap_port);
     }
 
-    guint bitrate = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(app->spin_bitrate));
-    gboolean enable_vbr = gtk_switch_get_active(GTK_SWITCH(app->switch_vbr));
-    g_key_file_set_integer(app->config, "audio", "bitrate", bitrate);
-    g_key_file_set_boolean(app->config, "audio", "enable-vbr", enable_vbr);
-    if(app->session) rtp_session_set_bitrate(app->session, bitrate, enable_vbr);
+    guint audio_bitrate = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(app->spin_audio_bitrate));
+    guint video_bitrate = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(app->spin_video_bitrate));
+    gboolean enable_video = gtk_switch_get_active(GTK_SWITCH(app->switch_video_enable));
+    if(app->session) g_object_set(app->session, "audio-bitrate", audio_bitrate, "video-bitrate", video_bitrate, NULL);
+    g_key_file_set_integer(app->config, "media", "audio-bitrate", audio_bitrate);
+    g_key_file_set_integer(app->config, "media", "video-bitrate", video_bitrate);
+    g_key_file_set_boolean(app->config, "media", "video-enable", enable_video);
 
     g_autofree gchar *base_path = g_build_filename(g_get_home_dir(), ".nanotalk", NULL);
     g_autofree gchar *config_path = g_build_filename(base_path, "user.cfg", NULL);
@@ -449,28 +457,40 @@ static void config_show(Application *app)
     seperator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_grid_attach(GTK_GRID(grid), seperator, 0, 6, 2, 1);
 
-    gboolean enable_vbr = g_key_file_get_boolean(app->config, "audio", "enable-vbr", NULL);
-    guint bitrate = g_key_file_get_integer(app->config, "audio", "bitrate", NULL);
+    guint audio_bitrate = g_key_file_get_integer(app->config, "media", "audio-bitrate", NULL);
+    guint video_bitrate = g_key_file_get_integer(app->config, "media", "video-bitrate", NULL);
+    gboolean enable_video = g_key_file_get_boolean(app->config, "media", "video-enable", NULL);
 
     label = gtk_label_new(_("Audio bitrate"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 7, 1, 1);
-    app->spin_bitrate = gtk_spin_button_new_with_range(4000, 650000, 1000);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_bitrate), bitrate);
-    gtk_grid_attach(GTK_GRID(grid), app->spin_bitrate, 1, 7, 1, 1);
-    gtk_widget_set_tooltip_text(app->spin_bitrate,
+    app->spin_audio_bitrate = gtk_spin_button_new_with_range(4000, 650000, 1000);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_audio_bitrate), audio_bitrate);
+    gtk_grid_attach(GTK_GRID(grid), app->spin_audio_bitrate, 1, 7, 1, 1);
+    gtk_widget_set_tooltip_text(app->spin_audio_bitrate,
     		_("Target bitrate of the audio encoder"));
 
-    label = gtk_label_new(_("Enable VBR"));
+    label = gtk_label_new(_("Video bitrate"));
     gtk_widget_set_halign(label, GTK_ALIGN_START);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 8, 1, 1);
-    app->switch_vbr = gtk_switch_new();
-    gtk_switch_set_active(GTK_SWITCH(app->switch_vbr), enable_vbr);
-    gtk_widget_set_hexpand(app->switch_vbr, TRUE);
-    gtk_widget_set_halign(app->switch_vbr, GTK_ALIGN_END);
-    gtk_grid_attach(GTK_GRID(grid), app->switch_vbr, 1, 8, 1, 1);
-    gtk_widget_set_tooltip_text(app->switch_vbr,
-    		_("Enables variable bitrate encoding"));
+    app->spin_video_bitrate = gtk_spin_button_new_with_range(0, G_MAXINT, 1000);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(app->spin_video_bitrate), video_bitrate);
+    gtk_grid_attach(GTK_GRID(grid), app->spin_video_bitrate, 1, 8, 1, 1);
+    gtk_widget_set_tooltip_text(app->spin_video_bitrate,
+            _("Target bitrate of the video encoder"));
+
+    label = gtk_label_new(_("Enable video"));
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 9, 1, 1);
+    app->switch_video_enable = gtk_switch_new();
+    gtk_switch_set_active(GTK_SWITCH(app->switch_video_enable), enable_video);
+    gtk_widget_set_hexpand(app->switch_video_enable, TRUE);
+    gtk_widget_set_halign(app->switch_video_enable, GTK_ALIGN_END);
+    gtk_grid_attach(GTK_GRID(grid), app->switch_video_enable, 1, 9, 1, 1);
+    gtk_widget_set_tooltip_text(app->switch_video_enable,
+    		_("Enable video capture"));
+
+    g_object_bind_property(app->switch_video_enable, "active", app->spin_video_bitrate, "sensitive", G_BINDING_SYNC_CREATE);
 
     GtkWidget *button;
     GtkWidget *hbox = gtk_button_box_new(GTK_ORIENTATION_HORIZONTAL);
@@ -617,10 +637,11 @@ static void application_startup(Application *app)
 
 void application_run(DhtClient *client, GKeyFile *config)
 {
-    if(!g_key_file_has_group(config, "audio"))
+    if(!g_key_file_has_group(config, "media"))
     {
-        g_key_file_set_integer(config, "audio", "bitrate", DEFAULT_BITRATE);
-        g_key_file_set_boolean(config, "audio", "enable-vbr", DEFAULT_ENABLE_VBR);
+        g_key_file_set_integer(config, "media", "audio-bitrate", DEFAULT_AUDIO_BITRATE);
+        g_key_file_set_integer(config, "media", "video-bitrate", DEFAULT_VIDEO_BITRATE);
+        g_key_file_set_boolean(config, "media", "video-enable", DEFAULT_VIDEO_ENABLE);
     }
 
     Application *app = &(Application){0};
