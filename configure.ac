@@ -3,6 +3,9 @@ AC_INIT([nanotalk], [2.1.0])
 AM_INIT_AUTOMAKE
 AC_PROG_CC([gcc])
 
+AM_GNU_GETTEXT([external])
+AM_GNU_GETTEXT_VERSION([0.18.3])
+
 AC_ARG_ENABLE([gui], AS_HELP_STRING([--disable-gui], [build without GUI]))
 AM_CONDITIONAL(ENABLE_GUI, [test "x$enable_gui" != "xno"])
 
@@ -49,5 +52,5 @@ if test "x$enable_gui" != "xno"; then
 fi
 
 AC_CONFIG_HEADERS([config.h])
-AC_CONFIG_FILES([Makefile src/Makefile])
+AC_CONFIG_FILES([Makefile src/Makefile po/Makefile.in])
 AC_OUTPUT

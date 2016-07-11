@@ -1,5 +1,6 @@
 AM_CFLAGS = $(SODIUM_CFLAGS) $(GLIB_CFLAGS)
-LDADD = $(SODIUM_LIBS) $(GLIB_LIBS)
+LDADD = $(SODIUM_LIBS) $(GLIB_LIBS) $(LIBINTL)
+DEFS += -DLOCALEDIR=\"$(localedir)\"
 
 bin_PROGRAMS = nanotalk
 nanotalk_SOURCES = main.c dht-common.c dht-client.c

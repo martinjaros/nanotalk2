@@ -1,0 +1,134 @@
+# Czech translation of Nanotalk.
+# This file is put in the public domain.
+# Martin Jaros <xjaros32@stud.feec.vutbr.cz>, 2016.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: nanotalk 2.1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2016-07-11 17:30+0200\n"
+"PO-Revision-Date: 2016-07-11 17:30+0200\n"
+"Last-Translator: Martin Jaroš <xjaros32@stud.feec.vutbr.cz>\n"
+"Language-Team: \n"
+"Language: cs\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(n==1) ? 0 : (n>=2 && n<=4) ? 1 : 2;\n"
+
+#: src/application.c:129
+#, c-format
+msgid "Answer an incoming call from <b>%s</b> ?"
+msgstr "Přijmout příchozí hovor od <b>%s</b> ?"
+
+#: src/application.c:253
+msgid "Nanotalk aliases"
+msgstr "Nanotalk přezdívky"
+
+#: src/application.c:276
+msgid "Save changes"
+msgstr "Uložit změny"
+
+#: src/application.c:375
+msgid "Nanotalk configuration"
+msgstr "Nanotalk konfigurace"
+
+#: src/application.c:393
+msgid "Client ID"
+msgstr "ID klienta"
+
+#: src/application.c:407
+msgid "Number of peers"
+msgstr "Počet spojení"
+
+#: src/application.c:421
+msgid "Local port"
+msgstr "Lokální port"
+
+#: src/application.c:428
+msgid ""
+"Local port to which the client is bound, this port needs to be forwarded on "
+"your router"
+msgstr ""
+"Lokální port použitý klientem, tento port je potřebné předávat směrovačem"
+
+#: src/application.c:430
+msgid "Bootstrap host"
+msgstr "Zaváděcí hostitel"
+
+#: src/application.c:438
+msgid "Hostname or IP address used to join the network"
+msgstr "Jméno hostitele nebo IP adresa použitá k připojení do sítě"
+
+#: src/application.c:440
+msgid "Bootstrap port"
+msgstr "Zaváděcí port"
+
+#: src/application.c:447
+msgid "Port number of the boostrap host"
+msgstr "Číslo portu zaváděcího hostitele"
+
+#: src/application.c:455
+msgid "Audio bitrate"
+msgstr "Bitová rychlost"
+
+#: src/application.c:462
+msgid "Target bitrate of the audio encoder"
+msgstr "Cílová bitová rychlost kodéru zvuku"
+
+#: src/application.c:464
+msgid "Enable VBR"
+msgstr "Povolit VBR"
+
+#: src/application.c:473
+msgid "Enables variable bitrate encoding"
+msgstr "Povolí proměnnou bitovou rychlost"
+
+#: src/application.c:480
+msgid "Apply"
+msgstr "Potvrdit"
+
+#: src/application.c:484
+msgid "Close"
+msgstr "Zavřít"
+
+#: src/application.c:498
+msgid "Nanotalk distributed voice client"
+msgstr "Nanotalk distribuovaný hlasový client"
+
+#: src/application.c:513
+msgid "Preferences"
+msgstr "Nastavení"
+
+#: src/application.c:519
+msgid "About"
+msgstr "O aplikaci"
+
+#: src/application.c:525
+msgid "Quit"
+msgstr "Ukončit"
+
+#: src/application.c:570
+msgid "Edit aliases"
+msgstr "Upravit přezdívky"
+
+#: src/dht-client.c:352
+msgid "Invalid ID"
+msgstr "Neplatné ID"
+
+#: src/dht-client.c:691
+msgid "Lookup failed"
+msgstr "Hledání se nezdařilo"
+
+#: src/dht-client.c:981
+msgid "Operation timed out"
+msgstr "Vypršel čas spojení"
+
+#: src/dht-client.c:1038
+msgid "Operation cancelled"
+msgstr "Operace přerušena"
+
+#: src/rtp-session.c:53
+#, c-format
+msgid "Missing GStreamer element: %s"
+msgstr "Chybí GStreamer prvek: %s"
