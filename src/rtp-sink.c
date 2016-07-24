@@ -140,13 +140,14 @@ static GstFlowReturn rtp_sink_render(GstBaseSink *basesink, GstBuffer *buffer)
             GST_WRITE_UINT64_LE(nonce, sink->roc << 16 | (guint64)seq);
             GST_WRITE_UINT32_LE(nonce + 8, ssrc);
 
-            if((seq == G_MAXUINT16) && (++sink->roc == 0x1000000000000))
+            if((seq == G_MAXUINT16) && (++sink->roc == 1ULL << 48))
                 GST_ELEMENT_ERROR(sink, STREAM, DECRYPT, ("Key utilization limit was reached"), (NULL));
 
             guint8 packet[map.size + 16];
+
             memcpy(packet, map.data, 12);
-            dht_aead_xor(packet + 12, map.data + 12, map.size - 12, nonce, &sink->key);
-            dht_aead_auth(packet + map.size, map.data, 12, packet + 12, map.size - 12, nonce, &sink->key);
+            dht_stream_xor(packet + 12, map.data + 12, map.size - 12, nonce, &sink->key);
+            dht_stream_auth(packet + map.size, packet, map.size, nonce, &sink->key);
 
             g_autoptr(GError) error = NULL;
             g_socket_send(sink->socket, (gchar*)packet, map.size + 16, NULL, &error);

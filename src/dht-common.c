@@ -26,34 +26,25 @@ static int init()
     return sodium_init();
 }
 
-void dht_aead_xor(gpointer c, gconstpointer m, gsize m_len, gconstpointer n, const DhtKey *key)
+void dht_stream_xor(gpointer out, gconstpointer in, gsize len, gconstpointer nonce, const DhtKey *key)
 {
-    crypto_stream_chacha20_ietf_xor_ic(c, m, m_len, n, 1, key->data);
+    crypto_stream_chacha20_ietf_xor_ic(out, in, len, nonce, 1, key->data);
 }
 
-void dht_aead_auth(gpointer mac, gconstpointer a, gsize a_len, gconstpointer c, gsize c_len, gconstpointer n, const DhtKey *key)
+void dht_stream_auth(gpointer mac, gconstpointer data, gsize len, gconstpointer nonce, const DhtKey* key)
 {
-    guint8 tmp[64];
-    crypto_stream_chacha20_ietf(tmp, 64, n, key->data);
-
-    crypto_onetimeauth_poly1305_state state;
-    crypto_onetimeauth_poly1305_init(&state, tmp);
-    crypto_onetimeauth_poly1305_update(&state, a, a_len);
-    crypto_onetimeauth_poly1305_update(&state, c, c_len);
-    crypto_onetimeauth_poly1305_final(&state, mac);
+    guint8 block[64];
+    crypto_stream_chacha20_ietf(block, 64, nonce, key->data);
+    crypto_onetimeauth_poly1305(mac, data, len, block);
 }
 
-gboolean dht_aead_verify(gconstpointer mac, gconstpointer a, gsize a_len, gconstpointer c, gsize c_len, gconstpointer n, const DhtKey *key)
+gboolean dht_stream_verify(gconstpointer mac, gconstpointer data, gsize len, gconstpointer nonce, const DhtKey *key)
 {
-    guint8 tmp[64];
-    crypto_stream_chacha20_ietf(tmp, 64, n, key->data);
+    guint8 block[64], computed_mac[16];
+    crypto_stream_chacha20_ietf(block, 64, nonce, key->data);
+    crypto_onetimeauth_poly1305(computed_mac, data, len, block);
 
-    crypto_onetimeauth_poly1305_state state;
-    crypto_onetimeauth_poly1305_init(&state, tmp);
-    crypto_onetimeauth_poly1305_update(&state, a, a_len);
-    crypto_onetimeauth_poly1305_update(&state, c, c_len);
-    crypto_onetimeauth_poly1305_final(&state, tmp);
-    return sodium_memcmp(tmp, mac, 16) == 0;
+    return sodium_memcmp(mac, computed_mac, 16) == 0;
 }
 
 void dht_key_make_random(DhtKey *key)

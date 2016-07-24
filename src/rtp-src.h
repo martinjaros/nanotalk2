@@ -39,7 +39,7 @@ struct _RtpSrc
     GHashTable *streams;
     DhtKey key;
 
-    gboolean drop;
+    gboolean enable;
 };
 
 struct _RtpSrcClass

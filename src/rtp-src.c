@@ -27,7 +27,7 @@ enum
     PROP_0,
     PROP_KEY,
     PROP_SOCKET,
-    PROP_DROP
+    PROP_ENABLE
 };
 
 typedef struct _RtpStream RtpStream;
@@ -71,8 +71,8 @@ static void rtp_src_class_init(RtpSrcClass *src_class)
         g_param_spec_object("socket", "Socket", "Session socket", G_TYPE_SOCKET,
                 G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-    g_object_class_install_property(object_class, PROP_DROP,
-        g_param_spec_boolean("drop", "Drop", "Drop buffers", FALSE,
+    g_object_class_install_property(object_class, PROP_ENABLE,
+        g_param_spec_boolean("enable", "Enable", "Enable receiver", TRUE,
                 G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     GstElementClass *element_class = (GstElementClass*)src_class;
@@ -95,6 +95,7 @@ static void rtp_src_init(RtpSrc *src)
 {
     src->streams = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, rtp_stream_free);
     src->cancellable = g_cancellable_new();
+    src->enable = TRUE;
 
     gst_base_src_set_live(GST_BASE_SRC(src), TRUE);
     gst_base_src_set_format(GST_BASE_SRC(src), GST_FORMAT_TIME);
@@ -133,8 +134,8 @@ static void rtp_src_set_property(GObject *object, guint prop_id, const GValue *v
             break;
         }
 
-        case PROP_DROP:
-            src->drop = g_value_get_boolean(value);
+        case PROP_ENABLE:
+            src->enable = g_value_get_boolean(value);
             break;
 
         default:
@@ -156,8 +157,8 @@ static void rtp_src_get_property(GObject *object, guint prop_id, GValue *value, 
             g_value_set_object(value, src->socket);
             break;
 
-        case PROP_DROP:
-            g_value_set_boolean(value, src->drop);
+        case PROP_ENABLE:
+            g_value_set_boolean(value, src->enable);
             break;
 
         default:
@@ -199,7 +200,7 @@ static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **outbuf)
         }
 
         if(len < 0) break;
-        if(len == 0) continue;
+        if((len == 0) || !src->enable) continue;
         if((len > 28) && (packet[0] == 0x80))
         {
             guint16 seq = GST_READ_UINT16_BE(packet + 2);
@@ -219,7 +220,7 @@ static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **outbuf)
             GST_WRITE_UINT32_LE(nonce + 8, ssrc);
 
             len -= 16;
-            if(dht_aead_verify(packet + len, packet, 12, packet + 12, len - 12, nonce, &src->key))
+            if(dht_stream_verify(packet + len, packet, len, nonce, &src->key))
             {
                 if(!stream)
                 {
@@ -231,25 +232,22 @@ static GstFlowReturn rtp_src_create(GstPushSrc *pushsrc, GstBuffer **outbuf)
                 stream->seq_last = seq;
                 stream->roc = roc;
 
-                if(!src->drop)
+                GstBuffer *buffer = gst_buffer_new_allocate(src->allocator, len, &src->params);
+                if(!buffer) return GST_FLOW_ERROR;
+
+                GstMapInfo map;
+                if(!gst_buffer_map(buffer, &map, GST_MAP_WRITE))
                 {
-                    GstBuffer *buffer = gst_buffer_new_allocate(src->allocator, len, &src->params);
-                    if(!buffer) return GST_FLOW_ERROR;
-
-                    GstMapInfo map;
-                    if(!gst_buffer_map(buffer, &map, GST_MAP_WRITE))
-                    {
-                        gst_buffer_unref(buffer);
-                        return GST_FLOW_ERROR;
-                    }
-
-                    memcpy(map.data, packet, 12);
-                    dht_aead_xor(map.data + 12, packet + 12, len - 12, nonce, &src->key);
-                    gst_buffer_unmap(buffer, &map);
-
-                    *outbuf = buffer;
-                    return GST_FLOW_OK;
+                    gst_buffer_unref(buffer);
+                    return GST_FLOW_ERROR;
                 }
+
+                memcpy(map.data, packet, 12);
+                dht_stream_xor(map.data + 12, packet + 12, len - 12, nonce, &src->key);
+                gst_buffer_unmap(buffer, &map);
+
+                *outbuf = buffer;
+                return GST_FLOW_OK;
             }
             else GST_WARNING_OBJECT(src, "Authentication failed");
         }

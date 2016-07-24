@@ -257,7 +257,7 @@ void rtp_session_launch(RtpSession *session, gboolean on_hold)
     if(on_hold)
     {
         priv->on_hold = TRUE;
-        gst_child_proxy_set(GST_CHILD_PROXY(priv->rx_pipeline), "rtp_src::drop", TRUE, NULL);
+        gst_child_proxy_set(GST_CHILD_PROXY(priv->rx_pipeline), "rtp_src::enable", FALSE, NULL);
     }
 
     if(priv->io_timeout_source == 0)
@@ -277,7 +277,7 @@ void rtp_session_accept(RtpSession *session)
     if(priv->on_hold)
     {
         priv->on_hold = FALSE;
-        gst_child_proxy_set(GST_CHILD_PROXY(priv->rx_pipeline), "rtp_src::drop", FALSE, NULL);
+        gst_child_proxy_set(GST_CHILD_PROXY(priv->rx_pipeline), "rtp_src::enable", TRUE, NULL);
     }
 
     if(priv->io_timeout_source > 0)
@@ -442,7 +442,7 @@ static gboolean bus_watch_cb(GstBus *bus, GstMessage *message, gpointer arg)
             gst_message_parse_error(message, &error, NULL);
             g_debug("%s", error->message);
 
-            if(g_str_has_prefix(message->src->name, "video_src") && (priv->io_timeout_source > 0))
+            if(g_str_has_prefix(message->src->name, "video_") && (priv->io_timeout_source > 0))
             {
                 if(priv->enable_video)
                 {
